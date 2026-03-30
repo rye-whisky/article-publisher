@@ -11,10 +11,13 @@ venv/
 config.yaml
 .env
 
+# Docs (internal)
+docs/
+
 # Data
-data/state.json
+data/
 output/
-logs/*.log
+logs/
 
 # Node
 node_modules/
@@ -26,3 +29,9 @@ frontend/dist/
 .idea/
 .vscode/
 *.swp
+
+# Test scripts
+backend/test_cover.py
+
+# Refer
+refer/
