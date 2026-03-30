@@ -1,0 +1,28 @@
+chainthink:
+  api_url: "https://api-v2.chainthink.cn/ccs/v1/admin/content/publish"
+  upload_url: "https://api-v2.chainthink.cn/ccs/v1/admin/upload_file"
+  token: "${CHAINTHINK_TOKEN}"     # read from environment variable
+  user_id: "83"
+  app_id: "101"
+
+sources:
+  stcn:
+    list_url: "https://www.stcn.com/article/wx/qszg.html"
+    detail_url_template: "https://www.stcn.com/article/detail/{id}.html"
+    allowed_authors: ["沐阳", "周乐"]
+    enabled: true
+  techflow:
+    list_url: "https://www.techflowpost.com/zh-CN/article"
+    detail_url_template: "https://www.techflowpost.com/zh-CN/article/{id}"
+    enabled: true
+
+paths:
+  state_file: "data/state.json"
+  stcn_output: "output/stcn_articles"
+  techflow_output: "output/techflow_articles"
+  log_file: "logs/pipeline.log"
+
+retry:
+  max_retries: 3
+  backoff_factor: 1
+  status_forcelist: [500, 502, 503, 504]

@@ -1,0 +1,5 @@
+requests>=2.28
+beautifulsoup4>=4.12
+pyyaml>=6.0
+fastapi>=0.115
+uvicorn[standard]>=0.30

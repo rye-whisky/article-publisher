@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Config with secrets
+config.yaml
+.env
+
+# Data
+data/state.json
+output/
+logs/*.log
+
+# Node
+node_modules/
+
+# Build
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
