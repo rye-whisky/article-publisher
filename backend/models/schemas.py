@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 class RunRequest(BaseModel):
     """Request to trigger a pipeline run."""
-    source: str = Field(default="all", pattern="^(stcn|techflow|all)$",
+    source: str = Field(default="all", pattern="^(stcn|techflow|blockbeats|all)$",
                         description="Article source to process")
     dry_run: bool = Field(default=False, description="If true, don't publish")
     skip_fetch: bool = Field(default=False, description="If true, only publish from local files")
@@ -20,10 +20,38 @@ class RunRequest(BaseModel):
 
 class RefetchRequest(BaseModel):
     """Request to refetch specific articles."""
-    source: str = Field(default="stcn", pattern="^(stcn|techflow|all)$")
+    source: str = Field(default="stcn", pattern="^(stcn|techflow|blockbeats|all)$")
     stcn_urls: list[str] = Field(default_factory=list)
     techflow_ids: list[str] = Field(default_factory=list)
+    blockbeats_urls: list[str] = Field(default_factory=list)
     republish: bool = Field(default=False, description="Also republish the refetched articles")
+
+
+class SchedulerRequest(BaseModel):
+    """Request to update scheduler config."""
+    enabled: bool
+    interval_minutes: int = Field(default=60, ge=1, le=1440)
+
+
+class CreateArticleRequest(BaseModel):
+    """Request to create a new article manually."""
+    title: str = Field(..., min_length=1)
+    source_key: str = Field(pattern="^(stcn|techflow|blockbeats)$")
+    blocks: list[dict] = Field(default_factory=list)
+    cover_src: str = ""
+    abstract: str = ""
+    author: str = ""
+    source: str = ""
+    original_url: str = ""
+
+
+class UpdateArticleRequest(BaseModel):
+    """Request to update an existing article."""
+    title: str | None = None
+    blocks: list[dict] | None = None
+    cover_src: str | None = None
+    abstract: str | None = None
+    author: str | None = None
 
 
 # ---------------------------------------------------------------------------

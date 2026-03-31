@@ -481,13 +481,22 @@ function LogsPage() {
   const [logs, setLogs] = useState([])
   const [lineCount, setLineCount] = useState(200)
 
+  // Load initial log history
   useEffect(() => {
     api.getLogs(lineCount).then(data => setLogs(data.lines || [])).catch(console.error)
-    const iv = setInterval(() => {
-      api.getLogs(lineCount).then(data => setLogs(data.lines || [])).catch(console.error)
-    }, 3000)
-    return () => clearInterval(iv)
   }, [lineCount])
+
+  // Subscribe to real-time log updates via SSE
+  useEffect(() => {
+    const es = new EventSource('/api/logs/stream')
+    es.onmessage = (e) => {
+      try {
+        const line = JSON.parse(e.data)
+        setLogs(prev => [...prev, line].slice(-1000))
+      } catch { /* ignore parse errors */ }
+    }
+    return () => es.close()
+  }, [])
 
   const highlightLevel = (line) => {
     const m = line.match(/\[(\w+)\]/)

@@ -1,32 +1,33 @@
 # -*- coding: utf-8 -*-
 """Status and state API routes."""
 
-from fastapi import APIRouter
-
-from services.pipeline_service import get_pipeline, run_state
+from fastapi import APIRouter, Request
 
 router = APIRouter(prefix="/api", tags=["status"])
 
 
 @router.get("/status")
-def get_status():
+def get_status(request: Request):
     """Pipeline status and config info."""
-    p = get_pipeline()
-    state = p.load_state()
+    svc = request.app.state.pipeline_service
+    state = svc.load_state()
+    sources = {}
+    for key, scraper in svc.scrapers.items():
+        src_cfg = svc.cfg.get("sources", {}).get(key, {})
+        info = {"enabled": src_cfg.get("enabled", True)}
+        if key == "stcn":
+            info["authors"] = list(scraper.allowed_authors)
+        sources[key] = info
     return {
-        "running": run_state.running,
-        "last_result": run_state.result,
-        "started_at": run_state.started_at,
+        **svc.run_state.status(),
         "total_published": len(state.get("published_ids", [])),
         "last_updated": state.get("updated_at"),
-        "sources": {
-            "stcn": {"enabled": p.stcn_cfg.get("enabled", True), "authors": list(p.allowed_authors)},
-            "techflow": {"enabled": p.techflow_cfg.get("enabled", True)},
-        },
+        "scheduler": svc.scheduler_state.status(),
+        "sources": sources,
     }
 
 
 @router.get("/state")
-def get_state():
+def get_state(request: Request):
     """Full dedup state."""
-    return get_pipeline().load_state()
+    return request.app.state.pipeline_service.load_state()

@@ -1,36 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Pipeline service — thin async wrapper around the core Pipeline class.
+"""Pipeline service: orchestration, state management, RunState, SchedulerState.
 
-Provides a thread-safe singleton for the pipeline instance and exposes
-high-level operations used by the API routes.
+This is the canonical service used by the API routes.
 """
 
+import json
 import logging
 import threading
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
-from pipeline import Pipeline
+from pipelines import create_scrapers
+from services.article_store import ArticleStore
+from services.publisher import Publisher
+from utils.cos import COSUploader
 
 log = logging.getLogger("pipeline")
 
-# Module-level singleton
-_pipeline: Optional[Pipeline] = None
-_pipeline_lock = threading.Lock()
-
-
-def get_pipeline() -> Pipeline:
-    """Return the singleton Pipeline instance (lazy init)."""
-    global _pipeline
-    if _pipeline is None:
-        with _pipeline_lock:
-            if _pipeline is None:
-                _pipeline = Pipeline()
-    return _pipeline
-
 
 # ---------------------------------------------------------------------------
-# Background runner state
+# State trackers
 # ---------------------------------------------------------------------------
 
 class RunState:
@@ -43,7 +34,6 @@ class RunState:
         self.result: Optional[dict] = None
 
     def start(self) -> bool:
-        """Try to mark as running. Returns False if already running."""
         with self._lock:
             if self.running:
                 return False
@@ -64,83 +54,352 @@ class RunState:
         }
 
 
-run_state = RunState()
+class SchedulerState:
+    """Thread-safe scheduler state and timer management."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.enabled = False
+        self.interval_minutes = 60
+        self.next_run_time: Optional[str] = None
+        self._timer: Optional[threading.Timer] = None
+        self._stop_event = threading.Event()
+
+    def set_config(self, enabled: bool, interval_minutes: int, run_fn=None):
+        with self._lock:
+            self.enabled = enabled
+            self.interval_minutes = max(1, min(1440, interval_minutes))
+            self._restart_timer(run_fn)
+
+    def _restart_timer(self, run_fn=None):
+        self._stop_event.set()
+        if self._timer:
+            self._timer.cancel()
+        self._stop_event.clear()
+
+        if not self.enabled:
+            self.next_run_time = None
+            return
+
+        import datetime as dt
+        next_run = dt.datetime.now() + dt.timedelta(minutes=self.interval_minutes)
+        self.next_run_time = next_run.strftime("%Y-%m-%dT%H:%M:%S")
+
+        fn = run_fn or self._default_run
+
+        def _callback():
+            if self._stop_event.is_set():
+                return
+            fn()
+            if self.enabled and not self._stop_event.is_set():
+                self._restart_timer(run_fn)
+
+        self._timer = threading.Timer(self.interval_minutes * 60, _callback)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _default_run(self):
+        pass  # overridden by PipelineService
+
+    def status(self) -> dict:
+        with self._lock:
+            return {
+                "enabled": self.enabled,
+                "interval_minutes": self.interval_minutes,
+                "next_run_time": self.next_run_time,
+            }
+
+    def stop(self):
+        with self._lock:
+            self.enabled = False
+            self._stop_event.set()
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
+            self.next_run_time = None
 
 
 # ---------------------------------------------------------------------------
-# Service operations
+# PipelineService
 # ---------------------------------------------------------------------------
 
-def run_pipeline(
-    source: str = "all",
-    dry_run: bool = False,
-    skip_fetch: bool = False,
-    since_today_0700: bool = False,
-    refetch_stcn_urls: Optional[list[str]] = None,
-    refetch_techflow_ids: Optional[list[str]] = None,
-    republish_ids: Optional[list[str]] = None,
-) -> dict:
-    """Run the pipeline synchronously (call from thread)."""
-    p = get_pipeline()
-    return p.run(
-        source=source,
-        dry_run=dry_run,
-        skip_fetch=skip_fetch,
-        since_today_0700=since_today_0700,
-        refetch_stcn_urls=refetch_stcn_urls,
-        refetch_techflow_ids=refetch_techflow_ids,
-        republish_ids=republish_ids,
-    )
+class PipelineService:
+    """Main pipeline service: orchestrates scrapers, publisher, state."""
 
+    def __init__(self, cfg: dict, base_dir: Path, session, scrapers: dict,
+                 publisher: Publisher, article_store: ArticleStore, state_file: Path):
+        self.cfg = cfg
+        self.base_dir = base_dir
+        self.session = session
+        self.scrapers = scrapers
+        self.publisher = publisher
+        self.article_store = article_store
+        self.state_file = state_file
+        self.run_state = RunState()
+        self.scheduler_state = SchedulerState()
 
-def list_articles(source: str = "all", limit: int = 50) -> list[dict]:
-    """Load articles from local storage."""
-    p = get_pipeline()
-    state = p.load_state()
-    published_ids = set(state.get("published_ids", []))
-    articles = p.load_articles(source)[:limit]
-    for a in articles:
-        a["published"] = a["article_id"] in published_ids
-    return articles
+    # -- Factory --
 
+    @classmethod
+    def create(cls, base_dir: Path = None) -> "PipelineService":
+        """Build a PipelineService from config.yaml."""
+        if base_dir is None:
+            base_dir = Path(__file__).resolve().parent.parent.parent
 
-def get_article(article_id: str) -> Optional[dict]:
-    """Find a single article by ID."""
-    p = get_pipeline()
-    state = p.load_state()
-    published_ids = set(state.get("published_ids", []))
-    for source in ("stcn", "techflow"):
-        for a in p.load_articles(source):
-            if a["article_id"] == article_id:
-                a["published"] = a["article_id"] in published_ids
-                return a
-    return None
+        import re
+        import os
+        import yaml
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
 
+        # Load config
+        config_path = base_dir / "config.yaml"
+        with open(config_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
 
-def remove_published_id(article_id: str) -> bool:
-    """Remove an article ID from the dedup state."""
-    p = get_pipeline()
-    state = p.load_state()
-    ids = state.get("published_ids", [])
-    if article_id in ids:
-        ids.remove(article_id)
-        state["published_ids"] = ids
-        p.save_state(state)
-        return True
-    return False
+        def _expand_env(value):
+            if not isinstance(value, str):
+                return value
+            return re.sub(r'\$\$(\w+)', lambda m: os.environ.get(m.group(1), ''), value)
 
+        def _expand_recursive(obj):
+            if isinstance(obj, str):
+                return _expand_env(obj)
+            if isinstance(obj, dict):
+                return {k: _expand_recursive(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_expand_recursive(v) for v in obj]
+            return obj
 
-def get_state() -> dict:
-    """Return the full dedup state."""
-    return get_pipeline().load_state()
+        cfg = _expand_recursive(raw)
 
+        # HTTP session with retry
+        retry_cfg = cfg.get("retry", {})
+        retry = Retry(
+            total=retry_cfg.get("max_retries", 3),
+            backoff_factor=retry_cfg.get("backoff_factor", 1),
+            status_forcelist=retry_cfg.get("status_forcelist", [500, 502, 503, 504]),
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        session = __import__("requests").Session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        })
 
-def read_logs(lines: int = 100) -> list[str]:
-    """Read recent log lines."""
-    p = get_pipeline()
-    log_path = p.base_dir / p.cfg["paths"]["log_file"]
-    if not log_path.exists():
-        return []
-    text = log_path.read_text(encoding="utf-8")
-    all_lines = text.strip().split("\n")
-    return all_lines[-lines:]
+        # Build components
+        scrapers = create_scrapers(cfg, session, base_dir)
+
+        api_headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json; charset=utf-8",
+            "Origin": "https://admin.chainthink.cn",
+            "Referer": "https://admin.chainthink.cn/",
+            "User-Agent": "Mozilla/5.0",
+            "x-token": cfg["chainthink"]["token"],
+            "x-user-id": str(cfg["chainthink"]["user_id"]),
+            "X-App-Id": str(cfg["chainthink"]["app_id"]),
+        }
+
+        cos = COSUploader(
+            upload_url=cfg["chainthink"]["upload_url"],
+            api_headers=api_headers,
+            session=session,
+            x_app_id=str(cfg["chainthink"].get("app_id", "")),
+        )
+
+        publisher = Publisher(
+            api_url=cfg["chainthink"]["api_url"],
+            api_headers=api_headers,
+            cos_uploader=cos,
+        )
+
+        article_store = ArticleStore(scrapers)
+        state_file = base_dir / cfg["paths"]["state_file"]
+
+        return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file)
+
+    # -- State management --
+
+    def load_state(self) -> dict:
+        if not self.state_file.exists():
+            return {"published_ids": [], "updated_at": None}
+        return json.loads(self.state_file.read_text(encoding="utf-8"))
+
+    def save_state(self, state: dict):
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        state["updated_at"] = datetime.now().isoformat()
+        self.state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # -- Orchestration --
+
+    def ingest_sources(self, source: str, state: dict) -> list[str]:
+        fetched = []
+        published_ids = set(state.get("published_ids", []))
+        for key, scraper in self.scrapers.items():
+            src_cfg = self.cfg.get("sources", {}).get(key, {})
+            if source not in (key, "all"):
+                continue
+            if not src_cfg.get("enabled", True):
+                continue
+            # BlockBeats has no listing page
+            if key == "blockbeats":
+                continue
+            for item in scraper.parse_list():
+                aid = f"{key}:{item['article_id']}"
+                if aid in published_ids:
+                    continue
+                try:
+                    article = scraper.fetch_detail(item)
+                    scraper.save(article)
+                    fetched.append(aid)
+                    log.info("Fetched %s: %s - %s", key.upper(), aid, item.get("title", "")[:40])
+                except Exception as e:
+                    log.error("Fetch %s %s failed: %s", key.upper(), item.get("article_id", ""), e)
+        log.info("Ingested %d new articles", len(fetched))
+        return fetched
+
+    def load_articles(self, source: str = "all") -> list[dict]:
+        return self.article_store.list_articles(source, limit=9999)
+
+    def run(self, source="all", since_today_0700=False, republish_ids=None,
+            skip_fetch=False, refetch_stcn_urls=None, refetch_techflow_ids=None,
+            refetch_blockbeats_urls=None, dry_run=False) -> dict:
+        """Run the full pipeline. Returns result dict."""
+        started = datetime.now()
+        log.info("Pipeline started: source=%s dry_run=%s", source, dry_run)
+
+        state = self.load_state()
+        refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls)
+        refreshed = []
+
+        if refetch_mode:
+            refreshed = self._do_refetch(source, refetch_stcn_urls, refetch_techflow_ids, refetch_blockbeats_urls)
+        elif not skip_fetch:
+            self.ingest_sources(source, state)
+
+        published_ids = set(state.get("published_ids", []))
+        republish_set = set(republish_ids or [])
+
+        if refetch_mode and not republish_set:
+            self.save_state(state)
+            return {"ok": True, "refetched": refreshed, "published": [], "skipped": [], "failed": []}
+
+        articles = self.load_articles(source)
+        accepted, skipped = [], []
+
+        # Author filtering for STCN
+        stcn_scraper = self.scrapers.get("stcn")
+        allowed_authors = stcn_scraper.allowed_authors if stcn_scraper else set()
+
+        for article in articles:
+            aid = article["article_id"]
+            sk = article.get("source_key", "")
+
+            if sk == "stcn" and allowed_authors and article.get("author") not in allowed_authors:
+                skipped.append({"id": aid, "reason": "author"})
+                continue
+            if since_today_0700 and sk == "stcn":
+                pt = article.get("publish_time", "")
+                m = __import__("re").match(r"(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})", pt)
+                if not m or m.group(1) != datetime.now().strftime("%Y-%m-%d") or m.group(2) < "07:00":
+                    skipped.append({"id": aid, "reason": "time"})
+                    continue
+            if aid in published_ids and aid not in republish_set:
+                skipped.append({"id": aid, "reason": "already_published"})
+                continue
+            accepted.append(article)
+
+        published, failed = [], []
+        if dry_run:
+            log.info("Dry run: would publish %d articles", len(accepted))
+        else:
+            for article in accepted:
+                try:
+                    result = self.publisher.publish(article)
+                    published.append({
+                        "article_id": article["article_id"],
+                        "cms_id": result["cms_id"],
+                        "title": article["title"],
+                        "cover_image": result.get("cover_image", ""),
+                    })
+                    published_ids.add(article["article_id"])
+                    log.info("Published %s -> CMS %s", article["article_id"], result["cms_id"])
+                except Exception as e:
+                    failed.append({"id": article["article_id"], "error": str(e), "source": article.get("source_key", "")})
+                    log.error("Publish failed %s: %s", article["article_id"], e)
+
+        state["published_ids"] = sorted(published_ids)
+        self.save_state(state)
+
+        elapsed = (datetime.now() - started).total_seconds()
+        log.info("Pipeline done: published=%d skipped=%d failed=%d %.1fs", len(published), len(skipped), len(failed), elapsed)
+        return {"ok": True, "refetched": refreshed, "published": published, "skipped": skipped, "failed": failed}
+
+    def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls):
+        refreshed = []
+        if source in ("stcn", "all") and stcn_urls:
+            scraper = self.scrapers.get("stcn")
+            if scraper:
+                for url in stcn_urls:
+                    try:
+                        item = scraper.build_item_from_url(url)
+                        article = scraper.fetch_detail(item)
+                        path = scraper.save(article)
+                        refreshed.append({"id": article["article_id_full"], "path": str(path)})
+                    except Exception as e:
+                        log.error("Refetch STCN %s failed: %s", url, e)
+        if source in ("techflow", "all") and techflow_ids:
+            scraper = self.scrapers.get("techflow")
+            if scraper:
+                tf_items = {it["article_id"]: it for it in scraper.parse_list()}
+                for aid in techflow_ids:
+                    item = tf_items.get(str(aid)) or {
+                        "article_id": str(aid), "title": str(aid),
+                        "original_url": f"https://www.techflowpost.com/zh-CN/article/{aid}",
+                        "source": "深潮 TechFlow",
+                    }
+                    try:
+                        article = scraper.fetch_detail(item)
+                        path = scraper.save(article)
+                        refreshed.append({"id": article["article_id_full"], "path": str(path)})
+                    except Exception as e:
+                        log.error("Refetch TechFlow %s failed: %s", aid, e)
+        if source in ("blockbeats", "all") and blockbeats_urls:
+            scraper = self.scrapers.get("blockbeats")
+            if scraper:
+                for url in blockbeats_urls:
+                    try:
+                        item = scraper.build_item_from_url(url)
+                        article = scraper.fetch_detail(item)
+                        path = scraper.save(article)
+                        refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
+                    except Exception as e:
+                        log.error("Refetch BlockBeats %s failed: %s", url, e)
+        return refreshed
+
+    # -- Scheduler helpers --
+
+    def scheduler_run(self):
+        try:
+            if self.run_state.start():
+                result = self.run(source="all")
+                self.run_state.finish(result)
+        except Exception as e:
+            log.error("Scheduler run failed: %s", e)
+            self.run_state.finish({"ok": False, "error": str(e)})
+
+    def enable_scheduler(self, enabled: bool, interval_minutes: int):
+        self.scheduler_state.set_config(enabled, interval_minutes, run_fn=self.scheduler_run)
+
+    # -- Log reading --
+
+    def read_logs(self, lines: int = 100) -> list[str]:
+        log_path = self.base_dir / self.cfg["paths"]["log_file"]
+        if not log_path.exists():
+            return []
+        text = log_path.read_text(encoding="utf-8")
+        all_lines = text.strip().split("\n")
+        return all_lines[-lines:]
