@@ -11,9 +11,6 @@ venv/
 config.yaml
 .env
 
-# Docs (internal)
-docs/
-
 # Data
 data/
 output/
@@ -35,3 +32,10 @@ backend/test_cover.py
 
 # Refer
 refer/
+
+# Claude Code
+.claude/
+
+# Temp files
+tmp_*.json
+CASE_STUDY.md

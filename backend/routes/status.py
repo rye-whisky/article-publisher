@@ -22,7 +22,7 @@ def get_status(request: Request):
         **svc.run_state.status(),
         "total_published": len(state.get("published_ids", [])),
         "last_updated": state.get("updated_at"),
-        "scheduler": svc.scheduler_state.status(),
+        "schedules": svc.get_source_schedules(),
         "sources": sources,
     }
 

@@ -24,6 +24,17 @@ class TechFlowScraper(BaseScraper):
         super().__init__(cfg, session, output_dir)
         self.excluded_keywords = ["加密早报", "Bitget", "HashKey", "Pharos", "火币", "Deepcoin"]
 
+    def _article_id_from_path(self, path: Path) -> str | None:
+        """Extract article_id from TechFlow JSON file path."""
+        if path.suffix != ".json":
+            return None
+        # Filename: techflow_{id}.json
+        stem = path.stem
+        if stem.startswith("techflow_"):
+            article_id = stem.replace("techflow_", "")
+            return f"techflow:{article_id}"
+        return None
+
     # -- List parsing --
 
     def parse_list(self) -> list[dict]:

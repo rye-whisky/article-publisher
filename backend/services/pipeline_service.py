@@ -54,13 +54,14 @@ class RunState:
         }
 
 
-class SchedulerState:
-    """Thread-safe scheduler state and timer management."""
+class SourceScheduleState:
+    """Thread-safe per-source scheduler state and timer management."""
 
-    def __init__(self):
+    def __init__(self, source_key: str, enabled: bool = False, interval_minutes: int = 60):
+        self.source_key = source_key
         self._lock = threading.Lock()
-        self.enabled = False
-        self.interval_minutes = 60
+        self.enabled = enabled
+        self.interval_minutes = max(1, min(1440, interval_minutes))
         self.next_run_time: Optional[str] = None
         self._timer: Optional[threading.Timer] = None
         self._stop_event = threading.Event()
@@ -99,11 +100,12 @@ class SchedulerState:
         self._timer.start()
 
     def _default_run(self):
-        pass  # overridden by PipelineService
+        pass  # overridden via run_fn
 
     def status(self) -> dict:
         with self._lock:
             return {
+                "source_key": self.source_key,
                 "enabled": self.enabled,
                 "interval_minutes": self.interval_minutes,
                 "next_run_time": self.next_run_time,
@@ -136,7 +138,7 @@ class PipelineService:
         self.article_store = article_store
         self.state_file = state_file
         self.run_state = RunState()
-        self.scheduler_state = SchedulerState()
+        self.source_schedules: dict[str, SourceScheduleState] = {}
 
     # -- Factory --
 
@@ -173,14 +175,19 @@ class PipelineService:
 
         cfg = _expand_recursive(raw)
 
-        # HTTP session with retry
+        # HTTP session with retry and connection pool limits (memory optimization)
         retry_cfg = cfg.get("retry", {})
         retry = Retry(
             total=retry_cfg.get("max_retries", 3),
             backoff_factor=retry_cfg.get("backoff_factor", 1),
             status_forcelist=retry_cfg.get("status_forcelist", [500, 502, 503, 504]),
         )
-        adapter = HTTPAdapter(max_retries=retry)
+        # Limit pool size for low-memory server (2 cores, 2GB RAM)
+        adapter = HTTPAdapter(
+            max_retries=retry,
+            pool_connections=4,  # Max 4 connection pools
+            pool_maxsize=8,      # Max 8 connections per pool
+        )
         session = __import__("requests").Session()
         session.mount("https://", adapter)
         session.mount("http://", adapter)
@@ -244,9 +251,6 @@ class PipelineService:
                 continue
             if not src_cfg.get("enabled", True):
                 continue
-            # BlockBeats has no listing page
-            if key == "blockbeats":
-                continue
             for item in scraper.parse_list():
                 aid = f"{key}:{item['article_id']}"
                 if aid in published_ids:
@@ -261,8 +265,16 @@ class PipelineService:
         log.info("Ingested %d new articles", len(fetched))
         return fetched
 
-    def load_articles(self, source: str = "all") -> list[dict]:
-        return self.article_store.list_articles(source, limit=9999)
+    def load_articles(self, source: str = "all", limit: int = 500) -> list[dict]:
+        """Load articles with memory-safe limit."""
+        return self.article_store.list_articles(source, limit=limit)
+
+    def clear_caches(self):
+        """Clear all in-memory caches to free RAM."""
+        self.article_store.clear_cache()
+        for scraper in self.scrapers.values():
+            if hasattr(scraper, "clear_cache"):
+                scraper.clear_cache()
 
     def run(self, source="all", since_today_0700=False, republish_ids=None,
             skip_fetch=False, refetch_stcn_urls=None, refetch_techflow_ids=None,
@@ -380,26 +392,68 @@ class PipelineService:
                         log.error("Refetch BlockBeats %s failed: %s", url, e)
         return refreshed
 
-    # -- Scheduler helpers --
+    # -- Per-source scheduler helpers --
 
-    def scheduler_run(self):
+    def _init_schedules(self):
+        """Initialize SourceScheduleState for each known source."""
+        for key in self.scrapers:
+            if key not in self.source_schedules:
+                src_cfg = self.cfg.get("sources", {}).get(key, {})
+                interval = src_cfg.get("schedule_interval_minutes", 60)
+                self.source_schedules[key] = SourceScheduleState(key, enabled=False, interval_minutes=interval)
+
+    def _source_scheduler_run(self, source_key: str):
+        """Timer callback: run pipeline for a single source."""
         try:
             if self.run_state.start():
-                result = self.run(source="all")
+                result = self.run(source=source_key)
                 self.run_state.finish(result)
         except Exception as e:
-            log.error("Scheduler run failed: %s", e)
+            log.error("Scheduler run failed for %s: %s", source_key, e)
             self.run_state.finish({"ok": False, "error": str(e)})
 
-    def enable_scheduler(self, enabled: bool, interval_minutes: int):
-        self.scheduler_state.set_config(enabled, interval_minutes, run_fn=self.scheduler_run)
+    def set_source_schedule(self, source_key: str, enabled: bool, interval_minutes: int):
+        self._init_schedules()
+        sched = self.source_schedules.get(source_key)
+        if not sched:
+            raise ValueError(f"Unknown source: {source_key}")
+        sched.set_config(enabled, interval_minutes, run_fn=lambda: self._source_scheduler_run(source_key))
 
-    # -- Log reading --
+    def get_source_schedules(self) -> dict:
+        self._init_schedules()
+        return {key: sched.status() for key, sched in self.source_schedules.items()}
+
+    def stop_all_schedules(self):
+        for sched in self.source_schedules.values():
+            sched.stop()
+
+    # -- Log reading (memory-efficient: read from end) --
 
     def read_logs(self, lines: int = 100) -> list[str]:
+        """Read last N lines from log file without loading entire file."""
         log_path = self.base_dir / self.cfg["paths"]["log_file"]
         if not log_path.exists():
             return []
-        text = log_path.read_text(encoding="utf-8")
-        all_lines = text.strip().split("\n")
-        return all_lines[-lines:]
+
+        # For small files, read normally
+        if log_path.stat().st_size < 1024 * 100:  # < 100KB
+            text = log_path.read_text(encoding="utf-8")
+            all_lines = text.strip().split("\n")
+            return all_lines[-lines:] if all_lines else []
+
+        # For large files, read from end (seek + read line by line)
+        result = []
+        with open(log_path, "rb") as f:
+            # Seek to end with buffer
+            f.seek(0, 2)
+            file_size = f.tell()
+            pos = file_size - min(8192, file_size)  # Read last 8KB chunk
+            f.seek(pos)
+
+            # Read and decode
+            chunk = f.read().decode("utf-8", errors="ignore")
+            for line in chunk.split("\n"):
+                if line.strip():
+                    result.append(line.strip())
+
+        return result[-lines:] if result else []

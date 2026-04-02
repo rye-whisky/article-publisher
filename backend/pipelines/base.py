@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Base scraper abstract class."""
+"""Base scraper abstract class with memory-efficient operations."""
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Iterator
 
 log = logging.getLogger("pipeline")
 
@@ -12,6 +14,10 @@ class BaseScraper(ABC):
     """Abstract base for source-specific scrapers.
 
     Each scraper handles one article source (STCN, TechFlow, BlockBeats).
+
+    Memory optimization:
+    - Uses iterators instead of loading all articles at once
+    - Lazy loading of article files
     """
 
     source_key: str = ""
@@ -20,6 +26,7 @@ class BaseScraper(ABC):
         self.cfg = cfg
         self.session = session
         self.output_dir = output_dir
+        self._article_cache: dict[Path, dict] = {}  # File cache
 
     @abstractmethod
     def parse_list(self) -> list[dict]:
@@ -38,15 +45,73 @@ class BaseScraper(ABC):
         """Parse a saved article file into a standard article dict."""
 
     @abstractmethod
-    def load_articles(self) -> list[dict]:
-        """Load all saved articles for this source."""
+    def _article_id_from_path(self, path: Path) -> str | None:
+        """Extract article_id from file path. Override in subclass."""
+
+    # -- Optimized article loading with iterator --
+
+    def load_articles(self, limit: int = 0) -> list[dict]:
+        """Load saved articles. Backward compat - wraps iterator."""
+        return list(self._iter_articles(limit=limit))
+
+    def _iter_articles(self, limit: int = 0, use_cache: bool = True) -> Iterator[dict]:
+        """Iterate over articles without loading all into memory.
+
+        Args:
+            limit: Max articles to yield (0 = no limit)
+            use_cache: Use in-memory cache for parsed articles
+        """
+        if not self.output_dir.exists():
+            return
+
+        count = 0
+        for json_file in sorted(self.output_dir.glob("*.json"), reverse=True):
+            if limit and count >= limit:
+                break
+
+            try:
+                if use_cache and json_file in self._article_cache:
+                    article = self._article_cache[json_file]
+                else:
+                    article = self.parse_article_file(json_file)
+                    article["path"] = str(json_file)
+                    article["source_key"] = self.source_key
+                    if use_cache:
+                        self._article_cache[json_file] = article
+
+                yield article
+                count += 1
+            except Exception as e:
+                log.warning("Failed to load %s: %s", json_file.name, e)
+
+    def _find_article_path(self, article_id: str) -> Path | None:
+        """Find article file by ID without loading all files."""
+        # Try pattern match first (faster than loading)
+        for pattern in self._get_id_patterns(article_id):
+            matches = list(self.output_dir.glob(pattern))
+            if matches:
+                return matches[0]
+        return None
+
+    def _get_id_patterns(self, article_id: str) -> list[str]:
+        """Get possible filename patterns for an article_id. Override as needed."""
+        # Default: try direct match and common prefixes
+        base_id = article_id.split(":")[-1]  # Remove source prefix if present
+        return [f"{base_id}.json", f"{self.source_key}_{base_id}.json", f"article_{base_id}.json"]
+
+    def clear_cache(self):
+        """Clear article file cache."""
+        self._article_cache.clear()
+
+    # -- Legacy methods for compat --
 
     def build_item_from_url(self, url: str, **kwargs) -> dict:
         """Build a list-item dict from a URL (for refetch). Default: raise."""
         raise NotImplementedError(f"{self.source_key} does not support URL-based refetch")
 
-    def fetch_html(self, url: str) -> str:
-        r = self.session.get(url, timeout=30)
+    def fetch_html(self, url: str, timeout: int = 30) -> str:
+        """Fetch HTML with timeout."""
+        r = self.session.get(url, timeout=timeout)
         r.raise_for_status()
         if not r.encoding or r.encoding.lower() == "iso-8859-1":
             r.encoding = r.apparent_encoding or "utf-8"

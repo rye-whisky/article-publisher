@@ -6,7 +6,9 @@ Slim assembler: CORS, route mounting, SPA serving.
 All business logic lives in services/, pipelines/, routes/.
 """
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router
+from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router
 from services.pipeline_service import PipelineService
 from utils.logging_config import setup_logging, get_broadcaster
 
@@ -27,31 +29,13 @@ setup_logging(BASE_DIR)
 log = logging.getLogger("pipeline")
 
 # ---------------------------------------------------------------------------
-# FastAPI app
+# Lifespan context manager
 # ---------------------------------------------------------------------------
 
-app = FastAPI(
-    title="Article Publisher",
-    version="1.0.0",
-    description="ChainThink article fetching, cleaning, and publishing pipeline",
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ---------------------------------------------------------------------------
-# Wire pipeline service into app.state
-# ---------------------------------------------------------------------------
-
-@app.on_event("startup")
-async def startup():
-    import asyncio
-
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application startup and shutdown."""
+    # Startup
     svc = PipelineService.create(BASE_DIR)
     app.state.pipeline_service = svc
 
@@ -62,6 +46,23 @@ async def startup():
 
     log.info("PipelineService initialized with sources: %s", list(svc.scrapers.keys()))
 
+    yield
+
+    # Shutdown
+    log.info("Shutting down pipeline service...")
+    svc.stop_all_schedules()
+
+# ---------------------------------------------------------------------------
+# FastAPI app
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Article Publisher",
+    version="1.0.0",
+    description="ChainThink article fetching, cleaning, and publishing pipeline",
+    lifespan=lifespan,
+)
+
 # ---------------------------------------------------------------------------
 # Mount routers
 # ---------------------------------------------------------------------------
@@ -71,6 +72,7 @@ app.include_router(articles_router)
 app.include_router(pipeline_router)
 app.include_router(logs_router)
 app.include_router(scheduler_router)
+app.include_router(memory_router)
 
 # ---------------------------------------------------------------------------
 # Serve frontend static files (production)

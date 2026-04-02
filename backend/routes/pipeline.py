@@ -47,6 +47,7 @@ def refetch(request: Request, req: RefetchRequest):
                 refetch_stcn_urls=req.stcn_urls or None,
                 refetch_techflow_ids=req.techflow_ids or None,
                 refetch_blockbeats_urls=req.blockbeats_urls or None,
+                refetch_chaincatcher_urls=req.chaincatcher_urls or None,
             )
             svc.run_state.finish(result)
         except Exception as e:

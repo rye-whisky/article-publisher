@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Article API routes: list, get, create, update, delete."""
 
-import json
 import time as _time
 from pathlib import Path
 
@@ -12,27 +11,38 @@ from services.article_store import ArticleStore
 
 router = APIRouter(prefix="/api", tags=["articles"])
 
+# Fields returned in list view (no blocks to save memory)
+_LIST_FIELDS = {
+    "article_id", "source_key", "title", "author", "source",
+    "publish_time", "original_url", "published", "abstract", "cover_image",
+}
+
 
 @router.get("/articles")
 def list_articles(
     request: Request,
-    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|all)$"),
-    limit: int = Query(50, ge=1, le=200),
+    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|chaincatcher|all)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
 ):
-    """List articles from local storage."""
+    """List articles (summary only, no blocks) with pagination."""
     svc = request.app.state.pipeline_service
     state = svc.load_state()
     published_ids = set(state.get("published_ids", []))
-    articles = svc.article_store.list_articles(source, limit)
+    total, articles = svc.article_store.list_articles_paged(source, page, page_size)
+
+    result = []
     for a in articles:
         a["published"] = a["article_id"] in published_ids
         ArticleStore.enrich_article(a)
-    return {"total": len(articles), "articles": articles}
+        result.append({k: a[k] for k in _LIST_FIELDS if k in a})
+
+    return {"total": total, "page": page, "page_size": page_size, "articles": result}
 
 
 @router.get("/articles/{article_id}")
 def get_article(request: Request, article_id: str):
-    """Get a single article's detail."""
+    """Get a single article's full detail (including blocks)."""
     svc = request.app.state.pipeline_service
     state = svc.load_state()
     published_ids = set(state.get("published_ids", []))

@@ -12,6 +12,7 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     from .stcn import StcnScraper
     from .techflow import TechFlowScraper
     from .blockbeats import BlockBeatsScraper
+    from .chaincatcher import ChainCatcherScraper
 
     scrapers = {}
     sources_cfg = cfg.get("sources", {})
@@ -31,5 +32,10 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     if "blockbeats" in sources_cfg:
         bb_dir = base_dir / paths_cfg.get("blockbeats_output", "output/blockbeats_articles")
         scrapers["blockbeats"] = BlockBeatsScraper(sources_cfg["blockbeats"], session, bb_dir)
+
+    # ChainCatcher
+    if "chaincatcher" in sources_cfg:
+        cc_dir = base_dir / paths_cfg.get("chaincatcher_output", "output/chaincatcher_articles")
+        scrapers["chaincatcher"] = ChainCatcherScraper(sources_cfg["chaincatcher"], session, cc_dir)
 
     return scrapers

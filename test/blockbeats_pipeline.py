@@ -118,7 +118,7 @@ def fetch_article(url, debug=False):
     for child in content.children:
         if not hasattr(child, "name") or not child.name:
             continue
-        if child.name == "p":
+        if child.name in ("p", "h2", "h3", "h4"):
             imgs = child.find_all("img")
             if imgs:
                 for img in imgs:
@@ -128,7 +128,7 @@ def fetch_article(url, debug=False):
             else:
                 text = child.get_text(strip=True)
                 if text:
-                    blocks.append({"type": "p", "text": text})
+                    blocks.append({"type": child.name, "text": text})
         elif child.name == "img":
             src = child.get("src") or child.get("data-src") or ""
             if src:
@@ -208,7 +208,16 @@ def upload_image(image_url, label="", debug=False):
 
         # Step 1: 请求上传凭证
         resp = request_upload(f"cover.{ext}", file_hash, use_pre_sign_url=True, confirm=False)
-        key = resp.get("data", {}).get("key", {})
+        resp_data = resp.get("data", {})
+        key = resp_data.get("key", {})
+        file_info = resp_data.get("file_info", {})
+
+        # 文件已存在时，API 直接返回 confirm_url，无需再上传
+        early_confirm = file_info.get("confirm_url") or resp_data.get("confirm_url") or ""
+        if early_confirm:
+            if debug:
+                print(f"  {label} already exists, reuse")
+            return early_confirm
 
         pre_sign_url = key.get("pre_sign_url", "")
         object_key = key.get("object_key", "")
@@ -297,6 +306,8 @@ def build_html(article):
             parts.append(f'<p><img src="{html_escape(uploaded)}" alt="" /></p>')
         elif block.get("type") == "p" and block.get("text"):
             parts.append(f"<p>{html_escape(block['text'])}</p>")
+        elif block.get("type") in ("h2", "h3", "h4") and block.get("text"):
+            parts.append(f"<{block['type']}>{html_escape(block['text'])}</{block['type']}>")
     return "".join(parts)
 
 

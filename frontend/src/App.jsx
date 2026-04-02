@@ -54,15 +54,24 @@ function DashboardPage() {
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
-  const [scheduler, setScheduler] = useState({ enabled: false, interval_minutes: 60, next_run_time: null })
-  const [schedulerInterval, setSchedulerInterval] = useState(60)
+  const [schedules, setSchedules] = useState({})
+  const [scheduleIntervals, setScheduleIntervals] = useState({})
+
+  const SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher']
 
   const fetchStatus = useCallback(async () => {
     try {
-      const data = await api.getStatus()
+      const [data, schedData] = await Promise.all([api.getStatus(), api.getSchedules()])
       setStatus(data)
       setRunning(data.running)
-      if (data.scheduler) setScheduler(data.scheduler)
+      setSchedules(schedData.schedules || {})
+      setScheduleIntervals(prev => {
+        const next = { ...prev }
+        for (const [k, v] of Object.entries(schedData.schedules || {})) {
+          if (next[k] === undefined) next[k] = v.interval_minutes
+        }
+        return next
+      })
     } catch (e) {
       console.error(e)
     } finally {
@@ -82,22 +91,28 @@ function DashboardPage() {
     }
   }
 
-  const handleToggleScheduler = async () => {
+  const handleToggleSchedule = async (sourceKey) => {
     try {
-      const newEnabled = !scheduler.enabled
-      const result = await api.updateScheduler(newEnabled, schedulerInterval)
-      setScheduler(result)
+      const sched = schedules[sourceKey]
+      const newEnabled = !sched?.enabled
+      const interval = scheduleIntervals[sourceKey] || sched?.interval_minutes || 60
+      const result = await api.updateSchedule(sourceKey, newEnabled, interval)
+      setSchedules(result.schedules || {})
     } catch (e) {
       alert(e.message)
     }
   }
 
-  const handleUpdateScheduler = async () => {
-    try {
-      const result = await api.updateScheduler(scheduler.enabled, schedulerInterval)
-      setScheduler(result)
-    } catch (e) {
-      alert(e.message)
+  const handleIntervalChange = async (sourceKey, newInterval) => {
+    setScheduleIntervals(prev => ({ ...prev, [sourceKey]: newInterval }))
+    const sched = schedules[sourceKey]
+    if (sched?.enabled) {
+      try {
+        const result = await api.updateSchedule(sourceKey, true, newInterval)
+        setSchedules(result.schedules || {})
+      } catch (e) {
+        alert(e.message)
+      }
     }
   }
 
@@ -144,6 +159,12 @@ function DashboardPage() {
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('techflow')}>
             <Icon name="play" /> {t('techFlowOnly')}
           </button>
+          <button className="btn btn-outline" disabled={running} onClick={() => handleRun('blockbeats')}>
+            <Icon name="play" /> {t('blockBeatsOnly')}
+          </button>
+          <button className="btn btn-outline" disabled={running} onClick={() => handleRun('chaincatcher')}>
+            <Icon name="play" /> {t('chainCatcherOnly')}
+          </button>
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('all', true)}>
             <Icon name="refresh" /> {t('dryRun')}
           </button>
@@ -152,28 +173,113 @@ function DashboardPage() {
 
       <div className="card">
         <div className="card-header">
-          <h2><Icon name="clock" size={14} style={{ marginRight: 6 }} />{t('scheduler')}</h2>
+          <h2><Icon name="clock" size={14} style={{ marginRight: 6 }} />{t('sourceSettings')}</h2>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <button
-            className={`btn ${scheduler.enabled ? 'btn-primary' : 'btn-outline'}`}
-            onClick={handleToggleScheduler}
-          >
-            {scheduler.enabled ? <Icon name="clock" /> : <Icon name="play" />}
-            {scheduler.enabled ? t('schedulerEnabled') : t('enableScheduler')}
-          </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ fontSize: 13, color: 'var(--text2)' }}>{t('intervalMinutes')}:</label>
-            <input
-              type="number"
-              min="1"
-              max="1440"
-              value={schedulerInterval}
-              onChange={e => setSchedulerInterval(Math.max(1, Math.min(1440, parseInt(e.target.value) || 1)))}
-              disabled={scheduler.enabled}
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text2)' }}>{t('source')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('interval')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('nextRun')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('action')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SOURCE_KEYS.map(key => {
+                const sched = schedules[key] || { enabled: false, interval_minutes: 60, next_run_time: null }
+                const srcName = t(`sourceName_${key}`) || key
+                return (
+                  <tr key={key} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 500 }}>
+                      {srcName}
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          padding: '1px 6px',
+                          borderRadius: 3,
+                          fontSize: 11,
+                          background: sched.enabled ? 'var(--success)' : 'var(--surface)',
+                          color: sched.enabled ? '#fff' : 'var(--text2)',
+                          border: `1px solid ${sched.enabled ? 'var(--success)' : 'var(--border)'}`,
+                        }}
+                      >
+                        {sched.enabled ? t('schedulerEnabled') : t('schedulerDisabled')}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="1440"
+                          value={scheduleIntervals[key] ?? sched.interval_minutes}
+                          onChange={e => handleIntervalChange(key, Math.max(1, Math.min(1440, parseInt(e.target.value) || 1)))}
+                          style={{
+                            width: 60,
+                            padding: '3px 6px',
+                            background: 'var(--surface)',
+                            border: `1px solid ${sched.enabled ? 'var(--success)' : 'var(--border)'}`,
+                            borderRadius: 4,
+                            color: 'var(--text)',
+                            fontSize: 13,
+                            textAlign: 'center',
+                          }}
+                        />
+                        <span style={{ color: 'var(--text2)', fontSize: 12 }}>{t('minutes')}</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px', fontSize: 12, color: sched.enabled ? 'var(--text)' : 'var(--text2)' }}>
+                      {sched.next_run_time ? new Date(sched.next_run_time).toLocaleString() : t('schedulerNotSet')}
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      <button
+                        className={`btn btn-sm ${sched.enabled ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => handleToggleSchedule(key)}
+                        title={sched.enabled ? t('disableScheduler') : t('enableScheduler')}
+                      >
+                        {sched.enabled ? t('disable') : t('enable')}
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2><Icon name="refresh" size={14} style={{ marginRight: 6 }} />{t('refetchByUrl')}</h2>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--text2)' }}>
+            {t('refetchDescription')}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <select
+              id="refetch-source"
               style={{
-                width: 70,
-                padding: '4px 8px',
+                padding: '6px 10px',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 4,
+                color: 'var(--text)',
+                fontSize: 13,
+              }}
+            >
+              <option value="blockbeats">BlockBeats</option>
+              <option value="chaincatcher">ChainCatcher</option>
+            </select>
+            <input
+              id="refetch-urls"
+              type="text"
+              placeholder={t('enterUrlsPlaceholder')}
+              style={{
+                flex: 1,
+                minWidth: 200,
+                padding: '6px 10px',
                 background: 'var(--surface)',
                 border: '1px solid var(--border)',
                 borderRadius: 4,
@@ -182,15 +288,35 @@ function DashboardPage() {
               }}
             />
             <button
-              className="btn btn-sm btn-outline"
-              onClick={handleUpdateScheduler}
-              disabled={scheduler.enabled}
+              className="btn btn-primary btn-sm"
+              disabled={running}
+              onClick={async () => {
+                const source = document.getElementById('refetch-source').value
+                const urlsText = document.getElementById('refetch-urls').value
+                const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u)
+                if (!urls.length) {
+                  alert(t('pleaseEnterUrls'))
+                  return
+                }
+                setRunning(true)
+                try {
+                  if (source === 'blockbeats') {
+                    await api.refetch('blockbeats', [], [], urls, [])
+                  } else {
+                    await api.refetch('chaincatcher', [], [], [], urls)
+                  }
+                  document.getElementById('refetch-urls').value = ''
+                } catch (e) {
+                  alert(e.message)
+                  setRunning(false)
+                }
+              }}
             >
-              {t('updateScheduler')}
+              <Icon name="refresh" size={12} /> {t('refetch')}
             </button>
           </div>
-          <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text2)' }}>
-            {t('nextRun')}: {scheduler.next_run_time ? new Date(scheduler.next_run_time).toLocaleString() : t('schedulerNotSet')}
+          <div style={{ fontSize: 12, color: 'var(--text2)' }}>
+            {t('refetchHint')}: https://www.theblockbeats.info/news/12345
           </div>
         </div>
       </div>
@@ -199,6 +325,10 @@ function DashboardPage() {
         <div className="card">
           <div className="card-header"><h2>{t('lastRunResult')}</h2></div>
           <div className="stats" style={{ marginBottom: 0 }}>
+            <div className="stat">
+              <div className="label">{t('refetched')}</div>
+              <div className="value" style={{ color: 'var(--info)' }}>{lastResult.refetched?.length ?? 0}</div>
+            </div>
             <div className="stat">
               <div className="label">{t('published')}</div>
               <div className="value" style={{ color: 'var(--success)' }}>{lastResult.published?.length ?? 0}</div>
@@ -288,6 +418,8 @@ function ArticleEditor({ article, onSave, onCancel }) {
         <div className="source-select">
           <button className={sourceKey === 'stcn' ? 'active' : ''} onClick={() => setSourceKey('stcn')}>STCN</button>
           <button className={sourceKey === 'techflow' ? 'active' : ''} onClick={() => setSourceKey('techflow')}>TechFlow</button>
+          <button className={sourceKey === 'blockbeats' ? 'active' : ''} onClick={() => setSourceKey('blockbeats')}>BlockBeats</button>
+          <button className={sourceKey === 'chaincatcher' ? 'active' : ''} onClick={() => setSourceKey('chaincatcher')}>ChainCatcher</button>
         </div>
       )}
 
@@ -336,39 +468,68 @@ function ArticleEditor({ article, onSave, onCancel }) {
 function ArticlesPage() {
   const { t } = useLanguage()
   const [source, setSource] = useState('all')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [articles, setArticles] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
+  const [selected, setSelected] = useState(null)  // article_id for detail view
+  const [detailArticle, setDetailArticle] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [editor, setEditor] = useState(null) // null | article object for edit, 'new' for create
+  const PAGE_SIZE = 20
+  const totalPages = Math.ceil(total / PAGE_SIZE)
 
   const fetchArticles = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.getArticles(source)
+      const data = await api.getArticles(source, page, PAGE_SIZE)
+      setTotal(data.total || 0)
       setArticles(data.articles || [])
     } catch (e) {
       console.error(e)
     } finally {
       setLoading(false)
     }
-  }, [source])
+  }, [source, page])
 
+  useEffect(() => { setPage(1) }, [source])
   useEffect(() => { fetchArticles() }, [fetchArticles])
 
-  const handleRemove = async (id) => {
-    if (!confirm(`${t('removeFromPublishedConfirm')} — ${id}?`)) return
+  const handleSourceChange = (s) => {
+    setSource(s)
+    setPage(1)
+  }
+
+  // Load article detail on demand
+  const handleSelectArticle = async (articleId) => {
+    setSelected(articleId)
+    setDetailLoading(true)
     try {
-      await api.removeFromState(id)
-      fetchArticles()
+      const data = await api.getArticle(articleId)
+      setDetailArticle(data)
     } catch (e) {
       alert(e.message)
+      setSelected(null)
+    } finally {
+      setDetailLoading(false)
     }
   }
 
   const handleEditorSave = () => {
     setEditor(null)
     setSelected(null)
+    setDetailArticle(null)
     fetchArticles()
+  }
+
+  const handleEditorOpen = async (articleId) => {
+    // Need full article for editor
+    try {
+      const data = await api.getArticle(articleId)
+      setEditor(data)
+    } catch (e) {
+      alert(e.message)
+    }
   }
 
   // Editor mode
@@ -381,11 +542,13 @@ function ArticlesPage() {
 
   // Detail view
   if (selected) {
-    const a = selected
+    if (detailLoading) return <div className="empty">{t('loading')}</div>
+    const a = detailArticle
+    if (!a) return null
     return (
       <div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          <button className="btn btn-outline btn-sm" onClick={() => setSelected(null)}>
+          <button className="btn btn-outline btn-sm" onClick={() => { setSelected(null); setDetailArticle(null) }}>
             &larr; {t('back')}
           </button>
           <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
@@ -393,7 +556,7 @@ function ArticlesPage() {
           </button>
           <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white', border: 'none' }} onClick={async () => {
             if (!confirm(t('confirmDelete'))) return
-            try { await api.deleteArticle(a.article_id); setSelected(null); fetchArticles() } catch (e) { alert(e.message) }
+            try { await api.deleteArticle(a.article_id); setSelected(null); setDetailArticle(null); fetchArticles() } catch (e) { alert(e.message) }
           }}>
             <Icon name="trash" size={14} /> {t('deleteArticle')}
           </button>
@@ -417,6 +580,7 @@ function ArticlesPage() {
                 if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} style={{ maxWidth: '100%' }} /></p>
                 if (b.type === 'h2') return <h3 key={i}>{b.text}</h3>
                 if (b.type === 'h3') return <h4 key={i}>{b.text}</h4>
+                if (b.type === 'h4') return <h5 key={i}>{b.text}</h5>
                 return <p key={i}>{b.text}</p>
               })}
             </div>
@@ -435,8 +599,8 @@ function ArticlesPage() {
           <button className="btn btn-primary btn-sm" onClick={() => setEditor('new')}>
             <Icon name="plus" size={14} /> {t('createArticle')}
           </button>
-          {['all', 'stcn', 'techflow'].map(s => (
-            <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => setSource(s)}>
+          {['all', 'stcn', 'techflow', 'blockbeats', 'chaincatcher'].map(s => (
+            <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(s)}>
               {s.toUpperCase()}
             </button>
           ))}
@@ -444,33 +608,48 @@ function ArticlesPage() {
       </div>
 
       {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{t('noArticlesFound')}</div> : (
-        <div className="article-grid">
-          {articles.map(a => (
-            <div key={a.article_id} className="article-card" style={{ position: 'relative' }} onClick={() => setSelected(a)}>
-              <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); setEditor(a) }}>
-                <Icon name="edit" size={14} />
-              </button>
-              {a.cover_image ? (
-                <img className="card-cover" src={a.cover_image} alt={a.title} />
-              ) : (
-                <div className="card-cover-placeholder">
-                  {a.source_key === 'stcn' ? 'STCN' : 'TechFlow'}
+        <>
+          <div className="article-grid">
+            {articles.map(a => (
+              <div key={a.article_id} className="article-card" style={{ position: 'relative' }} onClick={() => handleSelectArticle(a.article_id)}>
+                <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); handleEditorOpen(a.article_id) }}>
+                  <Icon name="edit" size={14} />
+                </button>
+                {a.cover_image ? (
+                  <img className="card-cover" src={a.cover_image} alt={a.title} />
+                ) : (
+                  <div className="card-cover-placeholder">
+                    {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : 'TF'}
+                  </div>
+                )}
+                <div className="card-body">
+                  <h3>{a.title}</h3>
+                  {a.abstract && <p className="card-abstract">{a.abstract}</p>}
                 </div>
-              )}
-              <div className="card-body">
-                <h3>{a.title}</h3>
-                {a.abstract && <p className="card-abstract">{a.abstract}</p>}
+                <div className="card-meta">
+                  <span>
+                    <span className={`badge ${a.source_key === 'stcn' ? 'badge-info' : a.source_key === 'blockbeats' ? 'badge-warning' : a.source_key === 'chaincatcher' ? 'badge-danger' : 'badge-warning'}`} style={{ marginRight: 6 }}>{a.source_key}</span>
+                    {a.published ? <span className="badge badge-success">{t('published')}</span> : <span className="badge badge-default">{t('draft')}</span>}
+                  </span>
+                  <span>{a.publish_time || ''}</span>
+                </div>
               </div>
-              <div className="card-meta">
-                <span>
-                  <span className={`badge ${a.source_key === 'stcn' ? 'badge-info' : 'badge-warning'}`} style={{ marginRight: 6 }}>{a.source_key}</span>
-                  {a.published ? <span className="badge badge-success">{t('published')}</span> : <span className="badge badge-default">{t('draft')}</span>}
-                </span>
-                <span>{a.publish_time || ''}</span>
-              </div>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20 }}>
+              <button className="btn btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                &larr; {t('prev') || 'Prev'}
+              </button>
+              <span style={{ fontSize: 13, color: 'var(--text2)' }}>
+                {page} / {totalPages} ({total})
+              </span>
+              <button className="btn btn-outline btn-sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                {t('next') || 'Next'} &rarr;
+              </button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </div>
   )

@@ -24,6 +24,33 @@ class StcnScraper(BaseScraper):
         super().__init__(cfg, session, output_dir)
         self.allowed_authors = set(cfg.get("allowed_authors", []))
 
+    def _get_id_patterns(self, article_id: str) -> list[str]:
+        base_id = article_id.replace("stcn:", "").replace("stcn_", "")
+        return [
+            f"stcn_{base_id}.json",  # New JSON format
+            f"*_{base_id}_*.md",      # Legacy MD format
+        ]
+
+    def _article_id_from_path(self, path: Path) -> str | None:
+        """Extract article_id from STCN file path."""
+        if path.suffix == ".json":
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            return f"stcn:{data.get('raw_id', data.get('article_id'))}"
+        # MD format: YYYY-MM-DD_id_title.md
+        stem = path.stem
+        m = re.search(r"(\d{8})_(\d+)_", stem)
+        if m:
+            return f"stcn:{m.group(2)}"
+        # Try extracting ID from content
+        try:
+            content = path.read_text(encoding="utf-8")
+            m = re.search(r"/detail/(\d+)\.html", content)
+            if m:
+                return f"stcn:{m.group(1)}"
+        except Exception:
+            pass
+        return None
+
     # -- List parsing --
 
     def parse_list(self) -> list[dict]:
@@ -100,22 +127,33 @@ class StcnScraper(BaseScraper):
 
     def save(self, article: dict) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"{self._today_str()}_{article['article_id']}_{self._sanitize(article['title'])}.md"
-        path = self.output_dir / fname
-        body = "\n\n".join([b["text"] for b in article["blocks"] if b["type"] != "img"])
-        content = (
-            f"# {article['title']}\n\n"
-            f"**来源**：{article['source']}\n"
-            f"**作者**：{article['author']}\n"
-            f"**发布时间**：{article['publish_time']}\n"
-            f"**原文链接**：{article['original_url']}\n\n---\n\n{body}\n"
+        raw_id = article.get("raw_id", article["article_id"]).replace("stcn:", "")
+        path = self.output_dir / f"stcn_{raw_id}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "article_id": article["article_id"],
+                    "title": article.get("title", ""),
+                    "source": article.get("source", "券商中国"),
+                    "author": article.get("author", ""),
+                    "publish_time": article.get("publish_time", ""),
+                    "original_url": article.get("original_url", ""),
+                    "cover_src": article.get("cover_src", ""),
+                    "blocks": article.get("blocks", []),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
         )
-        path.write_text(content, encoding="utf-8")
         return path
 
     # -- File parsing --
 
     def parse_article_file(self, path: Path) -> dict:
+        if path.suffix == ".json":
+            return self._parse_json_article_file(path)
+        # Legacy .md format
         text = path.read_text(encoding="utf-8")
         title = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
         author = re.search(r"\*\*作者\*\*：(.+)", text)
@@ -139,16 +177,28 @@ class StcnScraper(BaseScraper):
 
     # -- Load all --
 
-    def load_articles(self) -> list[dict]:
-        articles = []
+    def _iter_articles(self, limit: int = 0, use_cache: bool = True):
+        """Override: handle both legacy .md and new .json files."""
         if not self.output_dir.exists():
-            return articles
+            return
+
+        count = 0
         for f in sorted(self.output_dir.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
-            if f.suffix == ".json":
-                articles.append(self._parse_json_article_file(f))
-            elif f.suffix == ".md":
-                articles.append(self.parse_article_file(f))
-        return articles
+            if f.suffix not in (".md", ".json"):
+                continue
+            if limit and count >= limit:
+                break
+            try:
+                article = self.parse_article_file(f)
+                article["path"] = str(f)
+                article["source_key"] = self.source_key
+                yield article
+                count += 1
+            except Exception as e:
+                log.warning("Failed to load %s: %s", f.name, e)
+
+    def load_articles(self) -> list[dict]:
+        return list(self._iter_articles())
 
     # -- URL-based refetch --
 

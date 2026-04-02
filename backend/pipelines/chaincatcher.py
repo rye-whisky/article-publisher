@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""BlockBeats (律动) scraper."""
+"""ChainCatcher (链捕手) scraper."""
 
 import json
 import logging
@@ -12,84 +12,96 @@ from .base import BaseScraper
 
 log = logging.getLogger("pipeline")
 
-ARTICLE_SOURCE_NAME = "律动 BlockBeats"
-
-TAIL_CUT_TRIGGERS = [
-    "点击了解律动BlockBeats 在招岗位",
-    "欢迎加入律动 BlockBeats 官方社群",
-    "Telegram 订阅群",
-    "Telegram 交流群",
-    "Twitter 官方账号",
-]
+ARTICLE_SOURCE_NAME = "链捕手 ChainCatcher"
 
 
-class BlockBeatsScraper(BaseScraper):
-    """Scraper for BlockBeats (律动) articles."""
+class ChainCatcherScraper(BaseScraper):
+    """Scraper for ChainCatcher (链捕手) articles. URL-only, no listing page."""
 
-    source_key = "blockbeats"
+    source_key = "chaincatcher"
 
     def _article_id_from_path(self, path: Path) -> str | None:
-        """Extract article_id from BlockBeats JSON file path."""
+        """Extract article_id from ChainCatcher JSON file path."""
         if path.suffix != ".json":
             return None
-        # Filename: blockbeats_{id}.json
+        # Filename: chaincatcher_{id}.json
         stem = path.stem
-        if stem.startswith("blockbeats_"):
-            article_id = stem.replace("blockbeats_", "")
-            return f"blockbeats:{article_id}"
+        if stem.startswith("chaincatcher_"):
+            article_id = stem.replace("chaincatcher_", "")
+            return f"chaincatcher:{article_id}"
         return None
 
-    # -- List parsing (from article_choice page __NUXT__ data) --
+    # -- List parsing --
 
     def parse_list(self) -> list[dict]:
-        """Fetch article_choice page and extract article IDs from __NUXT__ data."""
-        list_url = self.cfg.get("list_url", "https://www.theblockbeats.info/article_choice")
+        """Parse article list from https://www.chaincatcher.com/article
+
+        ChainCatcher is a Nuxt.js SPA, article IDs are embedded in HTML.
+        Pattern: "/article/2255956"
+        """
+        list_url = "https://www.chaincatcher.com/article"
         html = self.fetch_html(list_url)
 
-        # Extract article_id values from __NUXT__ embedded JSON
-        # The NUXT data uses a compressed format, but article_id always appears
-        # as a literal number: article_id:61768
-        ids = re.findall(r'article_id:(\d+)', html)
-        seen = set()
+        # Extract article IDs using regex: "/article/1234567"
+        article_ids = re.findall(r'"/article/(\d{7})"', html)
+
         items = []
-        for aid in ids:
+        seen = set()
+        for aid in article_ids:
             if aid in seen:
                 continue
             seen.add(aid)
             items.append({
                 "article_id": aid,
-                "article_id_full": f"blockbeats:{aid}",
-                "raw_id": aid,
-                "title": "",
-                "original_url": f"https://www.theblockbeats.info/news/{aid}",
+                "original_url": f"https://www.chaincatcher.com/article/{aid}",
                 "source": ARTICLE_SOURCE_NAME,
             })
-        log.info("BlockBeats article_choice: found %d articles", len(items))
+
+        log.info("ChainCatcher found %d articles", len(items))
         return items
 
     # -- Detail fetching --
 
     def fetch_detail(self, item: dict) -> dict:
+        """Fetch article detail from ChainCatcher.
+
+        ChainCatcher is a Nuxt.js SPA with content embedded in HTML.
+        """
         url = item["original_url"]
         html = self.fetch_html(url)
         soup = BeautifulSoup(html, "html.parser")
 
-        # Title
-        title_el = soup.find("h1")
-        title = title_el.get_text(strip=True) if title_el else ""
+        # Title — try meta tags first, then h1
+        title_el = soup.find("meta", property="og:title")
+        if title_el:
+            title = title_el.get("content", "")
+        else:
+            title_el = soup.find("h1")
+            title = title_el.get_text(strip=True) if title_el else ""
 
         # Cover (og:image)
         og = soup.find("meta", property="og:image")
         cover_src = og["content"] if og else ""
 
-        # Content area
-        content = soup.find(class_="news-content")
+        # Publish time
+        publish_time_el = soup.find("meta", attrs={"name": "published_time"})
+        publish_time = publish_time_el.get("content", "") if publish_time_el else ""
+
+        # Content area — ChainCatcher uses .rich_text_content class
+        content = soup.select_one(".rich_text_content")
         if not content:
-            raise RuntimeError("页面中未找到 .news-content 元素")
+            # Fallback: look for class containing "rich_text" or "article-content"
+            content = soup.find("div", class_=re.compile(r"rich_text|article-content", re.I))
+
+        if not content:
+            raise RuntimeError("页面中未找到文章内容区域")
+
+        # rich_text_content > div > (p, h2, h3, ul, img ...)
+        inner = content.find("div") or content
 
         # Parse blocks
         blocks = []
-        for child in content.children:
+        for child in inner.children:
             if not hasattr(child, "name") or not child.name:
                 continue
             if child.name in ("p", "h2", "h3", "h4"):
@@ -97,33 +109,32 @@ class BlockBeatsScraper(BaseScraper):
                 if imgs:
                     for img in imgs:
                         src = img.get("src") or img.get("data-src") or ""
-                        if src:
+                        if src and not src.startswith("data:"):
                             blocks.append({"type": "img", "src": src})
-                else:
-                    text = child.get_text(strip=True)
-                    if text:
-                        blocks.append({"type": child.name, "text": text})
+                text = child.get_text(strip=True)
+                if text:
+                    blocks.append({"type": child.name, "text": text})
             elif child.name == "img":
                 src = child.get("src") or child.get("data-src") or ""
-                if src:
+                if src and not src.startswith("data:"):
                     blocks.append({"type": "img", "src": src})
+            elif child.name == "ul":
+                for li in child.find_all("li"):
+                    text = li.get_text(strip=True)
+                    if text:
+                        blocks.append({"type": "p", "text": text})
 
-        # Truncate at tail hooks
-        for i, b in enumerate(blocks):
-            if b["type"] == "p":
-                for trigger in TAIL_CUT_TRIGGERS:
-                    if trigger in b["text"]:
-                        blocks = blocks[:i]
-                        break
-            if i >= len(blocks):
-                break
+        if not blocks:
+            raise RuntimeError("无法解析文章内容")
 
         return {
             **item,
-            "source_key": "blockbeats",
-            "article_id_full": item.get("article_id_full", f"blockbeats:{item.get('article_id', '')}"),
+            "source_key": "chaincatcher",
+            "article_id_full": item.get("article_id_full", f"chaincatcher:{item.get('article_id', '')}"),
             "title": title,
             "source": ARTICLE_SOURCE_NAME,
+            "author": "",
+            "publish_time": publish_time,
             "cover_src": cover_src,
             "blocks": blocks,
         }
@@ -133,7 +144,7 @@ class BlockBeatsScraper(BaseScraper):
     def save(self, article: dict) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         raw_id = article.get("raw_id", article.get("article_id", ""))
-        path = self.output_dir / f"blockbeats_{raw_id}.json"
+        path = self.output_dir / f"chaincatcher_{raw_id}.json"
         path.write_text(
             json.dumps(
                 {
@@ -158,8 +169,8 @@ class BlockBeatsScraper(BaseScraper):
     def parse_article_file(self, path: Path) -> dict:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
         return {
-            "source_key": "blockbeats",
-            "article_id": f"blockbeats:{data['article_id']}",
+            "source_key": "chaincatcher",
+            "article_id": f"chaincatcher:{data['article_id']}",
             "raw_id": str(data["article_id"]),
             "title": data.get("title", path.stem),
             "author": data.get("author", ""),
@@ -184,14 +195,13 @@ class BlockBeatsScraper(BaseScraper):
     # -- URL-based fetch --
 
     def build_item_from_url(self, url: str, **kwargs) -> dict:
-        if "theblockbeats.info/news/" not in url:
-            raise ValueError(f"invalid BlockBeats article URL: {url}")
-        # Extract an article_id from the URL
-        m = re.search(r"/news/(\d+)", url)
+        if "chaincatcher.com" not in url:
+            raise ValueError(f"invalid ChainCatcher article URL: {url}")
+        m = re.search(r"/article/(\d+)", url)
         article_id = m.group(1) if m else url.rstrip("/").rsplit("/", 1)[-1]
         return {
             "article_id": article_id,
-            "article_id_full": f"blockbeats:{article_id}",
+            "article_id_full": f"chaincatcher:{article_id}",
             "raw_id": article_id,
             "title": "",
             "original_url": url,
