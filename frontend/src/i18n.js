@@ -105,6 +105,15 @@ export const translations = {
 
     // Common
     notAvailable: 'N/A',
+
+    // Auth
+    login: '登录',
+    username: '用户名',
+    password: '密码',
+    loginFailed: '用户名或密码错误',
+    logout: '退出登录',
+    loginTitle: '文章推送系统',
+    loginSubtitle: '请登录以继续',
   },
   en: {
     appName: 'Article Publisher',
@@ -206,5 +215,14 @@ export const translations = {
     darkMode: 'Dark Mode',
 
     notAvailable: 'N/A',
+
+    // Auth
+    login: 'Login',
+    username: 'Username',
+    password: 'Password',
+    loginFailed: 'Invalid username or password',
+    logout: 'Logout',
+    loginTitle: 'Article Publisher',
+    loginSubtitle: 'Sign in to continue',
   },
 }

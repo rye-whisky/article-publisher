@@ -14,6 +14,7 @@ from typing import Optional
 
 from pipelines import create_scrapers
 from services.article_store import ArticleStore
+from services.database import get_database
 from services.publisher import Publisher
 from utils.cos import COSUploader
 
@@ -129,7 +130,8 @@ class PipelineService:
     """Main pipeline service: orchestrates scrapers, publisher, state."""
 
     def __init__(self, cfg: dict, base_dir: Path, session, scrapers: dict,
-                 publisher: Publisher, article_store: ArticleStore, state_file: Path):
+                 publisher: Publisher, article_store: ArticleStore, state_file: Path,
+                 database=None):
         self.cfg = cfg
         self.base_dir = base_dir
         self.session = session
@@ -137,6 +139,7 @@ class PipelineService:
         self.publisher = publisher
         self.article_store = article_store
         self.state_file = state_file
+        self.database = database  # Optional: ArticleDatabase
         self.run_state = RunState()
         self.source_schedules: dict[str, SourceScheduleState] = {}
 
@@ -226,7 +229,15 @@ class PipelineService:
         article_store = ArticleStore(scrapers)
         state_file = base_dir / cfg["paths"]["state_file"]
 
-        return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file)
+        # Initialize database if configured
+        database = None
+        db_path = cfg.get("database", {}).get("sqlite_path")
+        if db_path:
+            from services.database import ArticleDatabase
+            database = ArticleDatabase(base_dir / db_path)
+            log.info("Database initialized: %s", base_dir / db_path)
+
+        return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file, database)
 
     # -- State management --
 
@@ -245,6 +256,12 @@ class PipelineService:
     def ingest_sources(self, source: str, state: dict) -> list[str]:
         fetched = []
         published_ids = set(state.get("published_ids", []))
+
+        # Also check database for published IDs
+        if self.database:
+            db_published = set(self.database.get_published_ids())
+            published_ids.update(db_published)
+
         for key, scraper in self.scrapers.items():
             src_cfg = self.cfg.get("sources", {}).get(key, {})
             if source not in (key, "all"):
@@ -258,6 +275,9 @@ class PipelineService:
                 try:
                     article = scraper.fetch_detail(item)
                     scraper.save(article)
+                    # Also save to database
+                    if self.database:
+                        self.database.insert_or_update(article)
                     fetched.append(aid)
                     log.info("Fetched %s: %s - %s", key.upper(), aid, item.get("title", "")[:40])
                 except Exception as e:
@@ -284,6 +304,12 @@ class PipelineService:
         log.info("Pipeline started: source=%s dry_run=%s", source, dry_run)
 
         state = self.load_state()
+        # Merge database published IDs
+        if self.database:
+            db_published = self.database.get_published_ids()
+            state.setdefault("published_ids", []).extend(db_published)
+            state["published_ids"] = sorted(set(state["published_ids"]))
+
         refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls)
         refreshed = []
 
@@ -338,6 +364,9 @@ class PipelineService:
                         "cover_image": result.get("cover_image", ""),
                     })
                     published_ids.add(article["article_id"])
+                    # Also mark as published in database
+                    if self.database:
+                        self.database.mark_published(article["article_id"], result["cms_id"])
                     log.info("Published %s -> CMS %s", article["article_id"], result["cms_id"])
                 except Exception as e:
                     failed.append({"id": article["article_id"], "error": str(e), "source": article.get("source_key", "")})

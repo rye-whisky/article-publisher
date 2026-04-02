@@ -32,7 +32,7 @@ mkdir -p $APP_DIR/output
 
 # 4. 创建Python虚拟环境
 echo "[4/7] 创建Python虚拟环境..."
-python3 -m venv $APP_DIR/venv
+python3.11 -m venv $APP_DIR/venv
 source $APP_DIR/venv/bin/activate
 
 # 5. 安装Python依赖
@@ -79,7 +79,7 @@ Environment="PATH=/opt/article-publisher/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
 ExecStart=/opt/article-publisher/venv/bin/uvicorn backend.api:app \\
     --host 0.0.0.0 \\
-    --port 8000 \\
+    --port 8001 \\
     --workers 1 \\
     --loop uvloop \\
     --log-config /opt/article-publisher/deploy/logging.ini \\

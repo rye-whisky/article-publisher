@@ -1,9 +1,19 @@
+# Article Publisher Configuration Example
+# Copy this file to config.yaml and fill in your values
+
 chainthink:
   api_url: "https://api-v2.chainthink.cn/ccs/v1/admin/content/publish"
   upload_url: "https://api-v2.chainthink.cn/ccs/v1/admin/upload_file"
   token: "${CHAINTHINK_TOKEN}"     # read from environment variable
   user_id: "83"
   app_id: "101"
+
+database:
+  # PostgreSQL (for server deployment - optional)
+  url: "postgresql+psycopg2://user:password@localhost:5432/dbname"
+  echo: false
+  # SQLite (for local development)
+  sqlite_path: "data/articles.db"
 
 sources:
   stcn:
@@ -15,14 +25,27 @@ sources:
     list_url: "https://www.techflowpost.com/zh-CN/article"
     detail_url_template: "https://www.techflowpost.com/zh-CN/article/{id}"
     enabled: true
+  blockbeats:
+    list_url: "https://www.theblockbeats.info/article_choice"
+    enabled: true
+  chaincatcher:
+    enabled: true
 
 paths:
   state_file: "data/state.json"
   stcn_output: "output/stcn_articles"
   techflow_output: "output/techflow_articles"
+  blockbeats_output: "output/blockbeats_articles"
+  chaincatcher_output: "output/chaincatcher_articles"
   log_file: "logs/pipeline.log"
 
 retry:
   max_retries: 3
   backoff_factor: 1
   status_forcelist: [500, 502, 503, 504]
+
+auth:
+  username: "admin"
+  password: "${ADMIN_PASSWORD}"  # read from environment variable
+  secret_key: "${SECRET_KEY}"    # read from environment variable
+  token_expire_hours: 24

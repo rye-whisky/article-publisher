@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { api } from './api'
-import { useTheme } from './contexts'
-import { useLanguage } from './contexts'
+import { api, setToken, clearToken } from './api'
+import { ThemeProvider, useTheme } from './contexts'
+import { LanguageProvider, useLanguage } from './contexts'
 
 // ---------------------------------------------------------------------------
 // Icons (inline SVG, no dependency)
@@ -27,9 +27,71 @@ const Icon = ({ name, size = 16 }) => {
 }
 
 // ---------------------------------------------------------------------------
+// Login Page
+// ---------------------------------------------------------------------------
+function LoginPage({ onLogin }) {
+  const { t } = useLanguage()
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const data = await api.login(username, password)
+      setToken(data.token)
+      onLogin()
+    } catch (err) {
+      setError(err.message || t('loginFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-header">
+          <h1>{t('loginTitle')}</h1>
+          <p>{t('loginSubtitle')}</p>
+        </div>
+        <form onSubmit={handleSubmit}>
+          {error && <div className="login-error">{error}</div>}
+          <div className="login-field">
+            <label>{t('username')}</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              autoFocus
+            />
+          </div>
+          <div className="login-field">
+            <label>{t('password')}</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </div>
+          <button className="btn btn-primary login-btn" type="submit" disabled={loading || !username || !password}>
+            {loading ? '...' : t('login')}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
-function Header() {
+function Header({ onLogout }) {
   const { theme, toggleTheme } = useTheme()
   const { lang, toggleLang } = useLanguage()
 
@@ -40,6 +102,10 @@ function Header() {
       </button>
       <button className="header-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to Light Mode' : '切换到深色模式'}>
         <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
+      </button>
+      <button className="header-btn logout-btn" onClick={onLogout} title={lang === 'zh' ? '退出登录' : 'Logout'}>
+        <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span>{lang === 'zh' ? '退出' : 'Logout'}</span>
       </button>
     </header>
   )
@@ -716,9 +782,41 @@ const PAGES = {
 }
 
 export default function App() {
-  const { t } = useLanguage()
   const [page, setPage] = useState('dashboard')
+  const [authed, setAuthed] = useState(() => {
+    try { return !!localStorage.getItem('auth_token') } catch { return false }
+  })
 
+  // Listen for auth:logout events from api.js (401 responses)
+  useEffect(() => {
+    const handler = () => setAuthed(false)
+    window.addEventListener('auth:logout', handler)
+    return () => window.removeEventListener('auth:logout', handler)
+  }, [])
+
+  const handleLogin = () => setAuthed(true)
+  const handleLogout = () => {
+    clearToken()
+    setAuthed(false)
+  }
+
+  // Always wrap with Providers (LoginPage needs them)
+  return (
+    <ThemeProvider>
+      <LanguageProvider>
+        {!authed ? (
+          <LoginPage onLogin={handleLogin} />
+        ) : (
+          <MainApp page={page} setPage={setPage} onLogout={handleLogout} />
+        )}
+      </LanguageProvider>
+    </ThemeProvider>
+  )
+}
+
+// Separate component for logged-in state (can use hooks safely)
+function MainApp({ page, setPage, onLogout }) {
+  const { t } = useLanguage()
   const PageComponent = PAGES[page] || DashboardPage
 
   return (
@@ -740,7 +838,7 @@ export default function App() {
         </nav>
       </aside>
       <div className="main-area">
-        <Header />
+        <Header onLogout={onLogout} />
         <main className="main">
           <PageComponent />
         </main>
@@ -748,3 +846,5 @@ export default function App() {
     </div>
   )
 }
+
+// End of App.jsx

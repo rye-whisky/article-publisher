@@ -8,6 +8,7 @@ All business logic lives in services/, pipelines/, routes/.
 
 import asyncio
 import logging
+import yaml
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router
+from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router, database_router
+from routes.auth import router as auth_router, init_auth
+from middleware.auth import AuthMiddleware
 from services.pipeline_service import PipelineService
 from utils.logging_config import setup_logging, get_broadcaster
 
@@ -35,6 +38,12 @@ log = logging.getLogger("pipeline")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
+    # Load config and init auth
+    config_path = BASE_DIR / "config.yaml"
+    with open(config_path, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    init_auth(config)
+
     # Startup
     svc = PipelineService.create(BASE_DIR)
     app.state.pipeline_service = svc
@@ -63,6 +72,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Auth middleware (reads serializer from routes.auth, initialized during lifespan)
+app.add_middleware(AuthMiddleware)
+
 # ---------------------------------------------------------------------------
 # Mount routers
 # ---------------------------------------------------------------------------
@@ -73,6 +85,8 @@ app.include_router(pipeline_router)
 app.include_router(logs_router)
 app.include_router(scheduler_router)
 app.include_router(memory_router)
+app.include_router(auth_router)
+app.include_router(database_router)
 
 # ---------------------------------------------------------------------------
 # Serve frontend static files (production)

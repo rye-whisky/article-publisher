@@ -127,6 +127,22 @@ certbot --nginx -d your-domain.com
 certbot renew --dry-run
 ```
 
+## 安全配置
+
+项目已内置登录认证，部署前请修改 `config.yaml` 中的认证信息：
+
+```yaml
+auth:
+  username: "你的用户名"
+  password: "你的强密码"
+  secret_key: "一个随机生成的密钥"
+  token_expire_hours: 24
+```
+
+- 前端和 API 均受登录保护，未登录无法访问任何功能
+- 登录后生成 Token，默认 24 小时过期
+- 修改 `secret_key` 会使所有已登录用户的 Token 失效
+
 ## 故障排查
 
 ```bash
