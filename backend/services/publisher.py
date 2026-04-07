@@ -48,6 +48,8 @@ class Publisher:
 
     @staticmethod
     def build_abstract(article):
+        if article.get("abstract"):
+            return article["abstract"]
         texts = [b["text"].strip() for b in article["blocks"] if b.get("type") != "img" and b.get("text")]
         return re.sub(r"\s+", " ", " ".join(texts))[:180]
 

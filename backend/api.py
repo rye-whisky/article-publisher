@@ -19,8 +19,10 @@ from fastapi.responses import FileResponse
 
 from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router, database_router
 from routes.auth import router as auth_router, init_auth
+from routes.settings import router as settings_router, init_settings_routes
 from middleware.auth import AuthMiddleware
 from services.pipeline_service import PipelineService
+from services.database import get_database
 from utils.logging_config import setup_logging, get_broadcaster
 
 # ---------------------------------------------------------------------------
@@ -42,7 +44,16 @@ async def lifespan(app: FastAPI):
     config_path = BASE_DIR / "config.yaml"
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    init_auth(config)
+
+    # Init database
+    db_path = config.get("database", {}).get("sqlite_path", "data/articles.db")
+    db = get_database(BASE_DIR / db_path)
+
+    # Init auth (seeds default user from config)
+    init_auth(config, database=db)
+
+    # Init settings routes
+    init_settings_routes(db)
 
     # Startup
     svc = PipelineService.create(BASE_DIR)
@@ -87,6 +98,7 @@ app.include_router(scheduler_router)
 app.include_router(memory_router)
 app.include_router(auth_router)
 app.include_router(database_router)
+app.include_router(settings_router)
 
 # ---------------------------------------------------------------------------
 # Serve frontend static files (production)

@@ -3,7 +3,8 @@
 
 import threading
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
+from routes.auth import require_admin
 
 from models.schemas import RunRequest, RefetchRequest
 
@@ -11,7 +12,7 @@ router = APIRouter(prefix="/api", tags=["pipeline"])
 
 
 @router.post("/run")
-def trigger_run(request: Request, req: RunRequest):
+def trigger_run(request: Request, req: RunRequest, _admin=Depends(require_admin)):
     """Trigger a pipeline run (background thread)."""
     svc = request.app.state.pipeline_service
     if not svc.run_state.start():
@@ -34,7 +35,7 @@ def trigger_run(request: Request, req: RunRequest):
 
 
 @router.post("/refetch")
-def refetch(request: Request, req: RefetchRequest):
+def refetch(request: Request, req: RefetchRequest, _admin=Depends(require_admin)):
     """Refetch specific articles by URL or ID."""
     svc = request.app.state.pipeline_service
     if not svc.run_state.start():

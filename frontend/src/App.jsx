@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { api, setToken, clearToken } from './api'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { api, setToken, setRole, getRole, clearToken } from './api'
 import { ThemeProvider, useTheme } from './contexts'
 import { LanguageProvider, useLanguage } from './contexts'
 
@@ -43,6 +43,7 @@ function LoginPage({ onLogin }) {
     try {
       const data = await api.login(username, password)
       setToken(data.token)
+      setRole(data.role)
       onLogin()
     } catch (err) {
       setError(err.message || t('loginFailed'))
@@ -91,17 +92,34 @@ function LoginPage({ onLogin }) {
 // ---------------------------------------------------------------------------
 // Header
 // ---------------------------------------------------------------------------
-function Header({ onLogout }) {
+function Header({ onLogout, onNavigateProfile }) {
   const { theme, toggleTheme } = useTheme()
   const { lang, toggleLang } = useLanguage()
+  const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
+  const [profile, setProfile] = useState(null)
+
+  useEffect(() => {
+    api.getProfile().then(setProfile).catch(() => {})
+  }, [])
+
+  const initial = profile?.username ? profile.username[0].toUpperCase() : 'U'
 
   return (
     <header className="header">
+      {isGuest && (
+        <span className="badge" style={{ background: 'var(--info)', color: '#fff', fontSize: 12, padding: '3px 10px', borderRadius: 10, marginRight: 'auto', marginLeft: 12 }}>
+          {t('guestMode')}
+        </span>
+      )}
       <button className="header-btn lang-toggle" onClick={toggleLang} title={lang === 'zh' ? 'Switch to English' : '切换到中文'}>
         {lang === 'zh' ? 'EN' : '中文'}
       </button>
       <button className="header-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to Light Mode' : '切换到深色模式'}>
         <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
+      </button>
+      <button className="header-user-btn" onClick={onNavigateProfile} title={lang === 'zh' ? '个人设置' : 'Profile'}>
+        {initial}
       </button>
       <button className="header-btn logout-btn" onClick={onLogout} title={lang === 'zh' ? '退出登录' : 'Logout'}>
         <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -117,6 +135,7 @@ function Header({ onLogout }) {
 
 function DashboardPage() {
   const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -215,6 +234,7 @@ function DashboardPage() {
         <div className="card-header">
           <h2>{t('actions')}</h2>
         </div>
+        {!isGuest ? (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-primary" disabled={running} onClick={() => handleRun('all')}>
             <Icon name="play" /> {t('runAllSources')}
@@ -235,6 +255,9 @@ function DashboardPage() {
             <Icon name="refresh" /> {t('dryRun')}
           </button>
         </div>
+        ) : (
+          <div style={{ color: 'var(--text2)', fontSize: 13, padding: '8px 0' }}>{t('guestModeHint')}</div>
+        )}
       </div>
 
       <div className="card">
@@ -281,6 +304,7 @@ function DashboardPage() {
                           max="1440"
                           value={scheduleIntervals[key] ?? sched.interval_minutes}
                           onChange={e => handleIntervalChange(key, Math.max(1, Math.min(1440, parseInt(e.target.value) || 1)))}
+                          disabled={isGuest}
                           style={{
                             width: 60,
                             padding: '3px 6px',
@@ -299,6 +323,9 @@ function DashboardPage() {
                       {sched.next_run_time ? new Date(sched.next_run_time).toLocaleString() : t('schedulerNotSet')}
                     </td>
                     <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      {isGuest ? (
+                        <span style={{ fontSize: 12, color: 'var(--text2)' }}>—</span>
+                      ) : (
                       <button
                         className={`btn btn-sm ${sched.enabled ? 'btn-primary' : 'btn-outline'}`}
                         onClick={() => handleToggleSchedule(key)}
@@ -306,6 +333,7 @@ function DashboardPage() {
                       >
                         {sched.enabled ? t('disable') : t('enable')}
                       </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -315,7 +343,7 @@ function DashboardPage() {
         </div>
       </div>
 
-      <div className="card">
+      {!isGuest && (<div className="card">
         <div className="card-header">
           <h2><Icon name="refresh" size={14} style={{ marginRight: 6 }} />{t('refetchByUrl')}</h2>
         </div>
@@ -385,7 +413,7 @@ function DashboardPage() {
             {t('refetchHint')}: https://www.theblockbeats.info/news/12345
           </div>
         </div>
-      </div>
+      </div>)}
 
       {lastResult && (
         <div className="card">
@@ -533,6 +561,7 @@ function ArticleEditor({ article, onSave, onCancel }) {
 
 function ArticlesPage() {
   const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
   const [source, setSource] = useState('all')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -617,6 +646,7 @@ function ArticlesPage() {
           <button className="btn btn-outline btn-sm" onClick={() => { setSelected(null); setDetailArticle(null) }}>
             &larr; {t('back')}
           </button>
+          {!isGuest && (<>
           <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
             <Icon name="edit" size={14} /> {t('editArticle')}
           </button>
@@ -626,6 +656,7 @@ function ArticlesPage() {
           }}>
             <Icon name="trash" size={14} /> {t('deleteArticle')}
           </button>
+          </>)}
         </div>
         <div className="card">
           <div className="article-detail">
@@ -662,9 +693,11 @@ function ArticlesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>{t('articles')}</h1>
         <div style={{ display: 'flex', gap: 4 }}>
+          {!isGuest && (
           <button className="btn btn-primary btn-sm" onClick={() => setEditor('new')}>
             <Icon name="plus" size={14} /> {t('createArticle')}
           </button>
+          )}
           {['all', 'stcn', 'techflow', 'blockbeats', 'chaincatcher'].map(s => (
             <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(s)}>
               {s.toUpperCase()}
@@ -678,9 +711,11 @@ function ArticlesPage() {
           <div className="article-grid">
             {articles.map(a => (
               <div key={a.article_id} className="article-card" style={{ position: 'relative' }} onClick={() => handleSelectArticle(a.article_id)}>
+                {!isGuest && (
                 <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); handleEditorOpen(a.article_id) }}>
                   <Icon name="edit" size={14} />
                 </button>
+                )}
                 {a.cover_image ? (
                   <img className="card-cover" src={a.cover_image} alt={a.title} />
                 ) : (
@@ -773,12 +808,208 @@ function LogsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Profile Page (full page — username, password, AI config)
+// ---------------------------------------------------------------------------
+function ProfilePage({ onLogout }) {
+  const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
+
+  // -- profile section --
+  const [username, setUsername] = useState('')
+  const [usernameLoading, setUsernameLoading] = useState(true)
+  const [usernameSaving, setUsernameSaving] = useState(false)
+
+  useEffect(() => {
+    api.getProfile().then(data => {
+      setUsername(data.username || '')
+    }).catch(console.error).finally(() => setUsernameLoading(false))
+  }, [])
+
+  const handleSaveUsername = async () => {
+    if (!username.trim()) return
+    setUsernameSaving(true)
+    try {
+      await api.updateProfile(username.trim())
+      alert(t('usernameUpdated'))
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setUsernameSaving(false)
+    }
+  }
+
+  // -- password section --
+  const [pwForm, setPwForm] = useState({ old: '', new: '', confirm: '' })
+  const [pwError, setPwError] = useState('')
+  const [pwSaving, setPwSaving] = useState(false)
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault()
+    setPwError('')
+    if (pwForm.new.length < 4) { setPwError(t('passwordTooShort')); return }
+    if (pwForm.new !== pwForm.confirm) { setPwError(t('passwordMismatch')); return }
+    setPwSaving(true)
+    try {
+      await api.changePassword(pwForm.old, pwForm.new)
+      alert(t('passwordChanged'))
+      onLogout()
+    } catch (err) {
+      setPwError(err.message || t('passwordChangeFailed'))
+    } finally {
+      setPwSaving(false)
+    }
+  }
+
+  // -- AI config section --
+  const [aiSettings, setAiSettings] = useState({ llm_api_url: '', llm_api_key: '', llm_model: '' })
+  const [aiLoading, setAiLoading] = useState(true)
+  const [aiSaving, setAiSaving] = useState(false)
+  const [aiTesting, setAiTesting] = useState(false)
+
+  useEffect(() => {
+    api.getSettings().then(data => {
+      setAiSettings({
+        llm_api_url: data.llm_api_url || '',
+        llm_api_key: data.llm_api_key || '',
+        llm_model: data.llm_model || '',
+      })
+    }).catch(console.error).finally(() => setAiLoading(false))
+  }, [])
+
+  const handleSaveAi = async () => {
+    setAiSaving(true)
+    try {
+      await api.updateSettings(aiSettings)
+      alert(t('saveSuccess'))
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setAiSaving(false)
+    }
+  }
+
+  const handleTestAi = async () => {
+    // Save first, then test
+    setAiTesting(true)
+    try {
+      await api.updateSettings(aiSettings)
+      const result = await api.testLlm()
+      alert(`${t('testConnection')}: OK\nModel: ${result.model}\nReply: ${result.reply}`)
+    } catch (e) {
+      alert(`${t('testConnection')}: FAIL\n${e.message}`)
+    } finally {
+      setAiTesting(false)
+    }
+  }
+
+  if (usernameLoading || aiLoading) return <div className="empty">{t('loading')}</div>
+
+  return (
+    <div className="settings-page">
+      <h1>{t('userProfile')}</h1>
+
+      {/* Username section */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>{t('username')}</h2></div>
+        {isGuest ? (
+          <div style={{ padding: '8px 0', fontSize: 14, color: 'var(--text)' }}>{username}</div>
+        ) : (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              style={{
+                width: '100%', padding: '10px 12px', background: 'var(--surface)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+          <button className="btn btn-primary" onClick={handleSaveUsername} disabled={usernameSaving || !username.trim()}>
+            {usernameSaving ? '...' : t('save')}
+          </button>
+        </div>
+        )}
+      </div>
+
+      {/* Password section */}
+      {!isGuest && (<div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>{t('changePassword')}</h2></div>
+        <form onSubmit={handleChangePassword}>
+          {pwError && <div className="login-error">{pwError}</div>}
+          <div className="login-field">
+            <label>{t('oldPassword')}</label>
+            <input type="password" value={pwForm.old} onChange={e => setPwForm(p => ({ ...p, old: e.target.value }))} />
+          </div>
+          <div className="login-field">
+            <label>{t('newPassword')}</label>
+            <input type="password" value={pwForm.new} onChange={e => setPwForm(p => ({ ...p, new: e.target.value }))} />
+          </div>
+          <div className="login-field">
+            <label>{t('confirmPassword')}</label>
+            <input type="password" value={pwForm.confirm} onChange={e => setPwForm(p => ({ ...p, confirm: e.target.value }))} />
+          </div>
+          <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
+            <button type="submit" className="btn btn-primary" disabled={pwSaving || !pwForm.old || !pwForm.new || !pwForm.confirm}>
+              {pwSaving ? '...' : t('save')}
+            </button>
+          </div>
+        </form>
+      </div>)}
+
+      {/* AI Config section */}
+      {!isGuest && (<div className="card">
+        <div className="card-header"><h2>{t('llmConfig')}</h2></div>
+        <div className="settings-group">
+          <label>{t('llmApiUrl')}</label>
+          <input
+            type="text"
+            value={aiSettings.llm_api_url}
+            onChange={e => setAiSettings(p => ({ ...p, llm_api_url: e.target.value }))}
+            placeholder="https://api.openai.com/v1"
+          />
+        </div>
+        <div className="settings-group">
+          <label>{t('llmApiKey')}</label>
+          <input
+            type="password"
+            value={aiSettings.llm_api_key}
+            onChange={e => setAiSettings(p => ({ ...p, llm_api_key: e.target.value }))}
+            placeholder="sk-..."
+          />
+        </div>
+        <div className="settings-group">
+          <label>{t('llmModel')}</label>
+          <input
+            type="text"
+            value={aiSettings.llm_model}
+            onChange={e => setAiSettings(p => ({ ...p, llm_model: e.target.value }))}
+            placeholder="gpt-4o / claude-3-sonnet"
+          />
+        </div>
+        <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
+          <button className="btn btn-outline" onClick={handleTestAi} disabled={aiTesting}>
+            {aiTesting ? '...' : t('testConnection')}
+          </button>
+          <button className="btn btn-primary" onClick={handleSaveAi} disabled={aiSaving}>
+            {aiSaving ? '...' : t('save')}
+          </button>
+        </div>
+      </div>)}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main App
 // ---------------------------------------------------------------------------
 const PAGES = {
   dashboard: DashboardPage,
   articles: ArticlesPage,
   logs: LogsPage,
+  profile: ProfilePage,
 }
 
 export default function App() {
@@ -819,6 +1050,9 @@ function MainApp({ page, setPage, onLogout }) {
   const { t } = useLanguage()
   const PageComponent = PAGES[page] || DashboardPage
 
+  // ProfilePage needs onLogout prop
+  const pageProps = page === 'profile' ? { onLogout } : {}
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -838,9 +1072,9 @@ function MainApp({ page, setPage, onLogout }) {
         </nav>
       </aside>
       <div className="main-area">
-        <Header onLogout={onLogout} />
+        <Header onLogout={onLogout} onNavigateProfile={() => setPage('profile')} />
         <main className="main">
-          <PageComponent />
+          <PageComponent {...pageProps} />
         </main>
       </div>
     </div>

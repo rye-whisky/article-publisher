@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """Per-source scheduler API routes."""
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
+from routes.auth import require_admin
 
 from models.schemas import SourceScheduleRequest
 
@@ -16,7 +17,7 @@ def get_schedules(request: Request):
 
 
 @router.put("/schedules/{source_key}")
-def update_schedule(request: Request, source_key: str, req: SourceScheduleRequest):
+def update_schedule(request: Request, source_key: str, req: SourceScheduleRequest, _admin=Depends(require_admin)):
     """Update a source's schedule config."""
     svc = request.app.state.pipeline_service
     svc.set_source_schedule(source_key, req.enabled, req.interval_minutes)

@@ -25,7 +25,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Import here to avoid circular import; module is initialized by lifespan
-        from routes.auth import verify_token
+        from routes.auth import verify_token, _current_username, _current_role
 
         # Extract token
         auth_header = request.headers.get("Authorization", "")
@@ -33,7 +33,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "未认证"}, status_code=401)
 
         token = auth_header[7:]
-        if not verify_token(token):
+        token_data = verify_token(token)
+        if not token_data:
             return JSONResponse({"detail": "认证已过期，请重新登录"}, status_code=401)
+
+        # Store username and role in context for downstream handlers
+        _current_username.set(token_data["username"])
+        _current_role.set(token_data["role"])
 
         return await call_next(request)

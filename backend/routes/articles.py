@@ -4,7 +4,8 @@
 import time as _time
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from routes.auth import require_admin
 
 from models.schemas import CreateArticleRequest, UpdateArticleRequest
 from services.article_store import ArticleStore
@@ -55,7 +56,7 @@ def get_article(request: Request, article_id: str):
 
 
 @router.post("/articles")
-def create_article(request: Request, req: CreateArticleRequest):
+def create_article(request: Request, req: CreateArticleRequest, _admin=Depends(require_admin)):
     """Create a new article manually."""
     svc = request.app.state.pipeline_service
     raw_id = f"manual_{int(_time.time() * 1000)}"
@@ -77,7 +78,7 @@ def create_article(request: Request, req: CreateArticleRequest):
 
 
 @router.put("/articles/{article_id}")
-def update_article(request: Request, article_id: str, req: UpdateArticleRequest):
+def update_article(request: Request, article_id: str, req: UpdateArticleRequest, _admin=Depends(require_admin)):
     """Update an existing article."""
     svc = request.app.state.pipeline_service
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
@@ -89,7 +90,7 @@ def update_article(request: Request, article_id: str, req: UpdateArticleRequest)
 
 
 @router.delete("/articles/{article_id}")
-def delete_article(request: Request, article_id: str):
+def delete_article(request: Request, article_id: str, _admin=Depends(require_admin)):
     """Delete an article file and remove from published state."""
     svc = request.app.state.pipeline_service
     deleted = svc.article_store.delete_article(article_id)
@@ -108,7 +109,7 @@ def delete_article(request: Request, article_id: str):
 
 
 @router.delete("/state/{article_id}")
-def delete_from_state(request: Request, article_id: str):
+def delete_from_state(request: Request, article_id: str, _admin=Depends(require_admin)):
     """Remove an article ID from the dedup state (allow republish)."""
     svc = request.app.state.pipeline_service
     state = svc.load_state()

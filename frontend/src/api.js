@@ -8,8 +8,16 @@ export function setToken(token) {
   try { localStorage.setItem('auth_token', token) } catch {}
 }
 
+export function setRole(role) {
+  try { localStorage.setItem('auth_role', role || 'admin') } catch {}
+}
+
+export function getRole() {
+  try { return localStorage.getItem('auth_role') || 'admin' } catch { return 'admin' }
+}
+
 export function clearToken() {
-  try { localStorage.removeItem('auth_token') } catch {}
+  try { localStorage.removeItem('auth_token'); localStorage.removeItem('auth_role') } catch {}
 }
 
 async function request(path, options = {}) {
@@ -23,6 +31,10 @@ async function request(path, options = {}) {
     clearToken();
     window.dispatchEvent(new Event('auth:logout'));
     throw new Error('认证已过期，请重新登录');
+  }
+
+  if (res.status === 403) {
+    throw new Error('访客无操作权限');
   }
 
   if (!res.ok) {
@@ -69,5 +81,19 @@ export const api = {
   getSchedules: () => request('/schedules'),
   updateSchedule: (sourceKey, enabled, intervalMinutes) => request(`/schedules/${sourceKey}`, {
     method: 'PUT', body: JSON.stringify({ enabled, interval_minutes: intervalMinutes }),
+  }),
+
+  // Settings
+  getSettings: () => request('/settings'),
+  updateSettings: (settings) => request('/settings', {
+    method: 'PUT', body: JSON.stringify({ settings }),
+  }),
+  testLlm: () => request('/settings/test-llm', { method: 'POST' }),
+  getProfile: () => request('/auth/profile'),
+  updateProfile: (username) => request('/auth/profile', {
+    method: 'PUT', body: JSON.stringify({ username }),
+  }),
+  changePassword: (oldPassword, newPassword) => request('/auth/change-password', {
+    method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
   }),
 };

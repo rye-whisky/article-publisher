@@ -8,7 +8,7 @@
 
 ## Overview
 
-Automated multi-source article fetching, cleaning, and publishing system for Web3/Crypto news. Supports 4 sources with one-click or scheduled publishing to ChainThink CMS.
+Automated multi-source article fetching, cleaning, and publishing system for Web3/Crypto news. Supports 4 sources with one-click or scheduled publishing to ChainThink CMS. Features AI-powered abstract generation, user authentication, and persistent SQLite storage.
 
 ## Data Sources
 
@@ -26,9 +26,10 @@ Frontend (React 19 + Vite 6)
     │  REST / SSE
     ▼
 Backend (FastAPI)
-    ├── routes/        — API endpoints (articles, pipeline, scheduler, logs, memory)
-    ├── services/      — PipelineService, ArticleStore, Publisher
+    ├── routes/        — API endpoints (articles, pipeline, scheduler, logs, settings, auth)
+    ├── services/      — PipelineService, ArticleDatabase, Publisher, LLM
     ├── pipelines/     — BaseScraper → STCN / TechFlow / BlockBeats / ChainCatcher
+    ├── middleware/    — Authentication & authorization
     └── utils/         — COSUploader, LogBroadcaster, LogRotation
 ```
 
@@ -47,25 +48,29 @@ article-publisher/
 │   │   └── chaincatcher.py     # ChainCatcher scraper (SPA)
 │   ├── services/
 │   │   ├── pipeline_service.py # Pipeline orchestration & scheduling
-│   │   ├── article_store.py    # Article CRUD + pagination
+│   │   ├── database.py         # SQLite database (articles, users, settings)
+│   │   ├── llm.py              # AI abstract generation
 │   │   └── publisher.py        # COS upload + CMS publish
 │   ├── routes/
 │   │   ├── articles.py         # Article CRUD + pagination
 │   │   ├── pipeline.py         # Run / refetch
 │   │   ├── scheduler.py        # Per-source scheduling
-│   │   ├── status.py           # Status / state
-│   │   ├── logs.py             # Logs + SSE stream
-│   │   └── memory.py           # Memory monitoring & cleanup
+│   │   ├── settings.py         # System settings & LLM config
+│   │   ├── auth.py             # User authentication
+│   │   └── __init__.py         # Route initialization
+│   ├── middleware/
+│   │   └── auth.py             # Auth middleware
 │   └── utils/
 │       ├── cos.py              # Tencent COS uploader
 │       ├── log_broadcaster.py  # SSE log broadcasting
 │       └── logging_config.py   # Logging setup
 ├── frontend/
 │   └── src/
-│       ├── App.jsx             # Main SPA (Dashboard / Articles / Logs)
+│       ├── App.jsx             # Main SPA (Dashboard / Articles / Settings)
 │       ├── api.js              # API client
-│       └── i18n.js             # i18n translations
-├── database/                   # SQLAlchemy models (optional DB mode)
+│       ├── i18n.js             # i18n translations
+│       └── contexts/           # Theme & language contexts
+├── data/                       # SQLite database (auto-created)
 ├── deploy/                     # Deployment scripts & nginx config
 ├── docs/                       # Documentation
 ├── test/                       # Local test scripts (not unit tests)
@@ -100,6 +105,9 @@ cd backend && python api.py
 |-------|-----------|
 | Frontend | React 19, Vite 6, Pure CSS |
 | Backend | FastAPI, Pydantic, Uvicorn |
+| Database | SQLite 3 (thread-local connections) |
+| Auth | JWT tokens, password hashing |
+| LLM | OpenAI-compatible API (GLM-4, etc.) |
 | Parsing | BeautifulSoup4 |
 | Upload | Tencent COS (pre-signed URL) |
 | Hash | CRC-64/ECMA-182 |
@@ -114,7 +122,7 @@ MIT
 
 ## 概述
 
-多信源加密资讯自动抓取、清洗与发布系统，支持 4 个信源，一键或定时发布到 ChainThink CMS。
+多信源加密资讯自动抓取、清洗与发布系统，支持 4 个信源，一键或定时发布到 ChainThink CMS。集成 AI 摘要生成、用户认证和 SQLite 持久化存储。
 
 ## 数据源
 
@@ -130,8 +138,16 @@ MIT
 ```
 article-publisher/
 ├── backend/           # FastAPI 后端
+│   ├── routes/        # API 路由（文章、管道、调度、设置、认证）
+│   ├── services/      # 核心服务（数据库、LLM、发布）
+│   ├── pipelines/     # 数据源爬虫
+│   └── middleware/    # 认证中间件
 ├── frontend/          # React 前端
-├── database/          # 数据库模型（可选）
+│   └── src/
+│       ├── App.jsx    # 主应用（仪表盘、文章、设置）
+│       ├── api.js     # API 客户端
+│       └── i18n.js    # 国际化
+├── data/              # SQLite 数据库（自动创建）
 ├── deploy/            # 部署脚本 & nginx 配置
 ├── docs/              # 项目文档
 ├── test/              # 本地测试脚本（非单元测试）
@@ -159,6 +175,9 @@ cd backend && python api.py
 |----|------|
 | 前端 | React 19, Vite 6, 纯 CSS |
 | 后端 | FastAPI, Pydantic, Uvicorn |
+| 数据库 | SQLite 3（线程本地连接） |
+| 认证 | JWT 令牌、密码哈希 |
+| LLM | OpenAI 兼容 API（GLM-4 等） |
 | 解析 | BeautifulSoup4 |
 | 上传 | 腾讯 COS 预签名 URL |
 | 哈希 | CRC-64/ECMA-182 |

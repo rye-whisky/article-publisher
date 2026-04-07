@@ -278,6 +278,14 @@ class PipelineService:
                     # Also save to database
                     if self.database:
                         self.database.insert_or_update(article)
+                        # AI abstract generation
+                        from services.llm import generate_abstract
+                        ai_abstract = generate_abstract(article, self.database)
+                        # Use same ID format as DB stores (raw article_id, not article_id_full)
+                        db_id = article.get("article_id", aid.split(":")[-1])
+                        updated = self.database.update_abstract(db_id, ai_abstract)
+                        log.info("DB abstract updated: db_id=%s, success=%s, len=%d",
+                                 db_id, updated, len(ai_abstract))
                     fetched.append(aid)
                     log.info("Fetched %s: %s - %s", key.upper(), aid, item.get("title", "")[:40])
                 except Exception as e:
@@ -326,6 +334,19 @@ class PipelineService:
             return {"ok": True, "refetched": refreshed, "published": [], "skipped": [], "failed": []}
 
         articles = self.load_articles(source)
+
+        # Enrich articles with DB abstract (AI-generated) when available
+        if self.database:
+            enriched = 0
+            for article in articles:
+                # Disk articles have "source:rawid" format; DB stores raw ID
+                db_lookup_id = article["article_id"].split(":")[-1] if ":" in article["article_id"] else article["article_id"]
+                db_art = self.database.get_by_article_id(db_lookup_id)
+                if db_art and db_art.get("abstract"):
+                    article["abstract"] = db_art["abstract"]
+                    enriched += 1
+            log.info("Enriched %d/%d articles with DB abstract", enriched, len(articles))
+
         accepted, skipped = [], []
 
         # Author filtering for STCN
@@ -380,6 +401,14 @@ class PipelineService:
         return {"ok": True, "refetched": refreshed, "published": published, "skipped": skipped, "failed": failed}
 
     def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls):
+        def _gen_abstract(db, article):
+            """Generate AI abstract and update DB. Returns the abstract."""
+            from services.llm import generate_abstract
+            abstract = generate_abstract(article, db)
+            db_id = article.get("article_id", "")
+            db.update_abstract(db_id, abstract)
+            return abstract
+
         refreshed = []
         if source in ("stcn", "all") and stcn_urls:
             scraper = self.scrapers.get("stcn")
@@ -389,7 +418,10 @@ class PipelineService:
                         item = scraper.build_item_from_url(url)
                         article = scraper.fetch_detail(item)
                         path = scraper.save(article)
-                        refreshed.append({"id": article["article_id_full"], "path": str(path)})
+                        if self.database:
+                            self.database.insert_or_update(article)
+                            _gen_abstract(self.database, article)
+                        refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
                     except Exception as e:
                         log.error("Refetch STCN %s failed: %s", url, e)
         if source in ("techflow", "all") and techflow_ids:
@@ -405,7 +437,10 @@ class PipelineService:
                     try:
                         article = scraper.fetch_detail(item)
                         path = scraper.save(article)
-                        refreshed.append({"id": article["article_id_full"], "path": str(path)})
+                        if self.database:
+                            self.database.insert_or_update(article)
+                            _gen_abstract(self.database, article)
+                        refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
                     except Exception as e:
                         log.error("Refetch TechFlow %s failed: %s", aid, e)
         if source in ("blockbeats", "all") and blockbeats_urls:
@@ -416,6 +451,9 @@ class PipelineService:
                         item = scraper.build_item_from_url(url)
                         article = scraper.fetch_detail(item)
                         path = scraper.save(article)
+                        if self.database:
+                            self.database.insert_or_update(article)
+                            _gen_abstract(self.database, article)
                         refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
                     except Exception as e:
                         log.error("Refetch BlockBeats %s failed: %s", url, e)

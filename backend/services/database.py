@@ -4,6 +4,7 @@
 Lightweight, serverless database for local development and small deployments.
 """
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -70,6 +71,33 @@ class ArticleDatabase:
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_publish_time ON articles(publish_time DESC)
+        """)
+
+        # Users table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'admin',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Migrate: add role column if missing (existing databases)
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'")
+        except Exception:
+            pass  # Column already exists
+
+        # Settings table (key-value)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
         """)
         conn.commit()
 
@@ -166,6 +194,16 @@ class ArticleDatabase:
 
         return conn.execute(query, params).fetchone()[0]
 
+    def update_abstract(self, article_id: str, abstract: str) -> bool:
+        """Update the abstract field for an article."""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "UPDATE articles SET abstract = ?, updated_at = ? WHERE article_id = ?",
+            (abstract, datetime.now().isoformat(), article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def mark_published(self, article_id: str, cms_id: str) -> bool:
         """Mark article as published with CMS ID."""
         conn = self._get_conn()
@@ -251,6 +289,114 @@ class ArticleDatabase:
             if b.get("type") != "img" and b.get("text")
         ]
         return re.sub(r"\s+", " ", " ".join(texts))[:180]
+
+    # -- User operations --
+
+    @staticmethod
+    def _hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    def seed_user(self, username: str, password: str, role: str = "admin"):
+        """Insert default user if no users exist."""
+        conn = self._get_conn()
+        count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        if count == 0:
+            now = datetime.now().isoformat()
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (username, self._hash_password(password), role, now, now),
+            )
+            conn.commit()
+
+    def seed_guest_user(self, username: str = "guest", password: str = "guest"):
+        """Insert guest user if not exists."""
+        conn = self._get_conn()
+        existing = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if not existing:
+            now = datetime.now().isoformat()
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (username, self._hash_password(password), "guest", now, now),
+            )
+            conn.commit()
+
+    def get_user_by_username(self, username: str) -> Optional[dict]:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            return None
+        return {"id": row["id"], "username": row["username"], "password_hash": row["password_hash"],
+                "role": row["role"] if "role" in row.keys() else "admin",
+                "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+    def get_user_by_id(self, user_id: int) -> Optional[dict]:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            return None
+        return {"id": row["id"], "username": row["username"], "password_hash": row["password_hash"],
+                "role": row["role"] if "role" in row.keys() else "admin",
+                "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+    def verify_user_password(self, username: str, password: str) -> bool:
+        user = self.get_user_by_username(username)
+        if not user:
+            return False
+        return user["password_hash"] == self._hash_password(password)
+
+    def change_password(self, username: str, old_password: str, new_password: str) -> bool:
+        if not self.verify_user_password(username, old_password):
+            return False
+        conn = self._get_conn()
+        conn.execute(
+            "UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
+            (self._hash_password(new_password), datetime.now().isoformat(), username),
+        )
+        conn.commit()
+        return True
+
+    def update_username(self, old_username: str, new_username: str) -> bool:
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE users SET username = ?, updated_at = ? WHERE username = ?",
+                (new_username, datetime.now().isoformat(), old_username),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception:
+            return False
+
+    # -- Settings operations --
+
+    def get_setting(self, key: str) -> Optional[str]:
+        conn = self._get_conn()
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def get_all_settings(self) -> Dict[str, str]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    def set_setting(self, key: str, value: str):
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        conn.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, now),
+        )
+        conn.commit()
+
+    def set_settings_batch(self, items: Dict[str, str]):
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        for key, value in items.items():
+            conn.execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (key, value, now),
+            )
+        conn.commit()
 
     def close(self):
         """Close database connection."""
