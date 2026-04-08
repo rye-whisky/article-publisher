@@ -39,3 +39,8 @@ refer/
 # Temp files
 tmp_*.json
 CASE_STUDY.md
+
+# Local sensitive docs/scripts (do not commit)
+API_DOC.md
+test_chaincatcher.py
+test_publish_chaincatcher.py

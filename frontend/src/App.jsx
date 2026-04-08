@@ -703,12 +703,20 @@ function LogsPage() {
     return () => es.close()
   }, [])
 
+  const escapeHtml = (text) => {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+
   const highlightLevel = (line) => {
-    const m = line.match(/\[(\w+)\]/)
-    if (!m) return line
+    // First escape HTML to prevent XSS
+    const safe = escapeHtml(line)
+    const m = safe.match(/\[(\w+)\]/)
+    if (!m) return safe
     const level = m[1].toLowerCase()
     const cls = `level-${level}`
-    return line.replace(`[${m[1]}]`, `<span class="${cls}">[${m[1]}]</span>`)
+    return safe.replace(`[${m[1]}]`, `<span class="${cls}">[${m[1]}]</span>`)
   }
 
   return (

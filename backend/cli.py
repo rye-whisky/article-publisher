@@ -13,13 +13,15 @@ from utils.logging_config import setup_logging
 
 def main():
     parser = argparse.ArgumentParser(description="ChainThink Article Publisher Pipeline")
-    parser.add_argument("--source", choices=["stcn", "techflow", "blockbeats", "all"], default="all")
+    parser.add_argument("--source", choices=["stcn", "techflow", "blockbeats", "chaincatcher", "all"], default="all")
     parser.add_argument("--since-today-0700", action="store_true")
     parser.add_argument("--republish", nargs="*", default=[])
+    parser.add_argument("--republish-refetched", action="store_true")
     parser.add_argument("--skip-fetch", action="store_true")
     parser.add_argument("--refetch-stcn-url", nargs="*", default=[])
     parser.add_argument("--refetch-techflow-id", nargs="*", default=[])
     parser.add_argument("--refetch-blockbeats-url", nargs="*", default=[])
+    parser.add_argument("--refetch-chaincatcher-url", nargs="*", default=[])
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -35,7 +37,9 @@ def main():
         refetch_stcn_urls=args.refetch_stcn_url or None,
         refetch_techflow_ids=args.refetch_techflow_id or None,
         refetch_blockbeats_urls=args.refetch_blockbeats_url or None,
+        refetch_chaincatcher_urls=args.refetch_chaincatcher_url or None,
         dry_run=args.dry_run,
+        republish_refetched=args.republish_refetched,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

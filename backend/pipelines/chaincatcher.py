@@ -96,33 +96,39 @@ class ChainCatcherScraper(BaseScraper):
         if not content:
             raise RuntimeError("页面中未找到文章内容区域")
 
-        # rich_text_content > div > (p, h2, h3, ul, img ...)
-        inner = content.find("div") or content
-
-        # Parse blocks
+        # Parse blocks — flatten nested <div> wrappers
+        # Regular articles: rich_text_content > div > (p, h2, h3, ...)
+        # 早报 articles:   rich_text_content > (p, h3, ul, div, p, div, ...)
+        # <div> elements are treated as transparent wrappers.
         blocks = []
-        for child in inner.children:
-            if not hasattr(child, "name") or not child.name:
-                continue
-            if child.name in ("p", "h2", "h3", "h4"):
-                imgs = child.find_all("img")
-                if imgs:
-                    for img in imgs:
-                        src = img.get("src") or img.get("data-src") or ""
-                        if src and not src.startswith("data:"):
-                            blocks.append({"type": "img", "src": src})
-                text = child.get_text(strip=True)
-                if text:
-                    blocks.append({"type": child.name, "text": text})
-            elif child.name == "img":
-                src = child.get("src") or child.get("data-src") or ""
-                if src and not src.startswith("data:"):
-                    blocks.append({"type": "img", "src": src})
-            elif child.name == "ul":
-                for li in child.find_all("li"):
-                    text = li.get_text(strip=True)
+
+        def _parse_children(parent):
+            for child in parent.children:
+                if not hasattr(child, "name") or not child.name:
+                    continue
+                if child.name == "div":
+                    _parse_children(child)
+                elif child.name in ("p", "h2", "h3", "h4"):
+                    imgs = child.find_all("img")
+                    if imgs:
+                        for img in imgs:
+                            src = img.get("src") or img.get("data-src") or ""
+                            if src and not src.startswith("data:"):
+                                blocks.append({"type": "img", "src": src})
+                    text = child.get_text(strip=True)
                     if text:
-                        blocks.append({"type": "p", "text": text})
+                        blocks.append({"type": child.name, "text": text})
+                elif child.name == "img":
+                    src = child.get("src") or child.get("data-src") or ""
+                    if src and not src.startswith("data:"):
+                        blocks.append({"type": "img", "src": src})
+                elif child.name == "ul":
+                    for li in child.find_all("li"):
+                        text = li.get_text(strip=True)
+                        if text:
+                            blocks.append({"type": "p", "text": text})
+
+        _parse_children(content)
 
         if not blocks:
             raise RuntimeError("无法解析文章内容")

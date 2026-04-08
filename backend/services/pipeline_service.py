@@ -12,9 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from config.loader import load_config
 from pipelines import create_scrapers
 from services.article_store import ArticleStore
-from services.database import get_database
 from services.publisher import Publisher
 from utils.cos import COSUploader
 
@@ -151,32 +151,12 @@ class PipelineService:
         if base_dir is None:
             base_dir = Path(__file__).resolve().parent.parent.parent
 
-        import re
-        import os
-        import yaml
         from requests.adapters import HTTPAdapter
         from urllib3.util.retry import Retry
 
         # Load config
         config_path = base_dir / "config.yaml"
-        with open(config_path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
-
-        def _expand_env(value):
-            if not isinstance(value, str):
-                return value
-            return re.sub(r'\$\$(\w+)', lambda m: os.environ.get(m.group(1), ''), value)
-
-        def _expand_recursive(obj):
-            if isinstance(obj, str):
-                return _expand_env(obj)
-            if isinstance(obj, dict):
-                return {k: _expand_recursive(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_expand_recursive(v) for v in obj]
-            return obj
-
-        cfg = _expand_recursive(raw)
+        cfg = load_config(config_path)
 
         # HTTP session with retry and connection pool limits (memory optimization)
         retry_cfg = cfg.get("retry", {})
@@ -306,7 +286,8 @@ class PipelineService:
 
     def run(self, source="all", since_today_0700=False, republish_ids=None,
             skip_fetch=False, refetch_stcn_urls=None, refetch_techflow_ids=None,
-            refetch_blockbeats_urls=None, dry_run=False) -> dict:
+            refetch_blockbeats_urls=None, refetch_chaincatcher_urls=None,
+            dry_run=False, republish_refetched=False) -> dict:
         """Run the full pipeline. Returns result dict."""
         started = datetime.now()
         log.info("Pipeline started: source=%s dry_run=%s", source, dry_run)
@@ -318,16 +299,23 @@ class PipelineService:
             state.setdefault("published_ids", []).extend(db_published)
             state["published_ids"] = sorted(set(state["published_ids"]))
 
-        refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls)
+        refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls or refetch_chaincatcher_urls)
         refreshed = []
 
         if refetch_mode:
-            refreshed = self._do_refetch(source, refetch_stcn_urls, refetch_techflow_ids, refetch_blockbeats_urls)
+            refreshed = self._do_refetch(source, refetch_stcn_urls, refetch_techflow_ids, refetch_blockbeats_urls, refetch_chaincatcher_urls)
         elif not skip_fetch:
             self.ingest_sources(source, state)
 
         published_ids = set(state.get("published_ids", []))
         republish_set = set(republish_ids or [])
+
+        # Refetch + republish mode: default to publishing only the refreshed articles
+        # when caller opts in (e.g. /api/refetch with republish=true).
+        if refetch_mode and republish_refetched and not republish_set:
+            republish_set = {item.get("id", "") for item in refreshed if item.get("id")}
+
+        publish_only_set = set(republish_set) if refetch_mode and republish_set else set()
 
         if refetch_mode and not republish_set:
             self.save_state(state)
@@ -357,6 +345,8 @@ class PipelineService:
             aid = article["article_id"]
             sk = article.get("source_key", "")
 
+            if publish_only_set and aid not in publish_only_set:
+                continue
             if sk == "stcn" and allowed_authors and article.get("author") not in allowed_authors:
                 skipped.append({"id": aid, "reason": "author"})
                 continue
@@ -400,7 +390,7 @@ class PipelineService:
         log.info("Pipeline done: published=%d skipped=%d failed=%d %.1fs", len(published), len(skipped), len(failed), elapsed)
         return {"ok": True, "refetched": refreshed, "published": published, "skipped": skipped, "failed": failed}
 
-    def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls):
+    def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls, chaincatcher_urls=None):
         def _gen_abstract(db, article):
             """Generate AI abstract and update DB. Returns the abstract."""
             from services.llm import generate_abstract
@@ -457,6 +447,20 @@ class PipelineService:
                         refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
                     except Exception as e:
                         log.error("Refetch BlockBeats %s failed: %s", url, e)
+        if source in ("chaincatcher", "all") and chaincatcher_urls:
+            scraper = self.scrapers.get("chaincatcher")
+            if scraper:
+                for url in chaincatcher_urls:
+                    try:
+                        item = scraper.build_item_from_url(url)
+                        article = scraper.fetch_detail(item)
+                        path = scraper.save(article)
+                        if self.database:
+                            self.database.insert_or_update(article)
+                            _gen_abstract(self.database, article)
+                        refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
+                    except Exception as e:
+                        log.error("Refetch ChainCatcher %s failed: %s", url, e)
         return refreshed
 
     # -- Per-source scheduler helpers --

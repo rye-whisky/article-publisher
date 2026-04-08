@@ -26,9 +26,8 @@ PYTHON_BIN = "python3.11"  # 服务器上的 Python 版本
 
 def check_env():
     """检查环境变量"""
-    if not SERVER["password"]:
-        print("[!] 错误: 请设置环境变量 DEPLOY_PASSWORD")
-        print("    用法: DEPLOY_PASSWORD=xxx python deploy_remote.py")
+    if not SERVER["password"] and not SERVER["key_filename"]:
+        print("[!] 错误: 请设置 DEPLOY_PASSWORD 或 DEPLOY_KEY_FILE")
         sys.exit(1)
     print(f"[*] 目标服务器: {SERVER['host']}:{SERVER['port']} (用户: {SERVER['username']})")
 

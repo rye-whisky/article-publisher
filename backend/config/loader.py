@@ -10,10 +10,14 @@ import yaml
 
 
 def _expand_env(value):
-    """Replace ${VAR} patterns with environment variables."""
+    """Replace ${VAR} / $$VAR patterns with environment variables."""
     if not isinstance(value, str):
         return value
-    return re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), ''), value)
+    return re.sub(
+        r'\$\{(\w+)\}|\$\$(\w+)',
+        lambda m: os.environ.get(m.group(1) or m.group(2), ''),
+        value,
+    )
 
 
 def _expand_recursive(obj):

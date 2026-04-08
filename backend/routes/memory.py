@@ -36,24 +36,6 @@ async def get_memory_status():
     return get_memory_info()
 
 
-@memory_router.post("/clear-cache")
-async def clear_cache():
-    """Clear all in-memory caches to free RAM."""
-    from fastapi import Request
-
-    async def _clear(request: Request):
-        svc: "PipelineService" = request.app.state.pipeline_service
-        svc.clear_caches()
-
-        import gc
-        gc.collect()
-
-        return {"ok": True, "memory": get_memory_info()}
-
-    return _clear  # Will be called with request in route handler
-
-
-# Proper handler with request injection
 @memory_router.post("/clear")
 async def clear_memory_cache(request):
     """Clear all in-memory caches to free RAM."""

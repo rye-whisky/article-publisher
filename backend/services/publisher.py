@@ -39,11 +39,24 @@ class Publisher:
                     f'alt="{self.html_escape(block.get("alt", ""))}" /></p>'
                 )
                 continue
+            # raw HTML — 不做转义，直接插入
+            raw = (block.get("html") or "").strip()
+            if raw:
+                tag = block.get("type", "p") if block.get("type") in ["p", "h2", "h3", "h4"] else "p"
+                parts.append(f"<{tag}>{raw}</{tag}>")
+                continue
             text = (block.get("text") or "").strip()
             if not text:
                 continue
-            tag = block.get("type", "p") if block.get("type") in ["p", "h2", "h3"] else "p"
-            parts.append(f"<{tag}>{self.html_escape(text)}</{tag}>")
+            tag = block.get("type", "p") if block.get("type") in ["p", "h2", "h3", "h4"] else "p"
+            href = block.get("href", "")
+            if href:
+                parts.append(
+                    f'<{tag}><a href="{self.html_escape(href)}" '
+                    f'target="_blank" rel="noopener">{self.html_escape(text)}</a></{tag}>'
+                )
+            else:
+                parts.append(f"<{tag}>{self.html_escape(text)}</{tag}>")
         return "".join(parts)
 
     @staticmethod
