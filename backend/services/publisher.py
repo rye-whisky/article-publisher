@@ -34,8 +34,12 @@ class Publisher:
             if block.get("type") == "img" and block.get("src"):
                 if cover_src and block["src"] == cover_src:
                     continue
+                # Upload image to COS for cross-domain compatibility
+                img_url = block["src"]
+                cos_url = self._upload_image_to_cos(img_url)
+                final_url = cos_url if cos_url else img_url
                 parts.append(
-                    f'<p><img src="{self.html_escape(block["src"])}" '
+                    f'<p><img src="{self.html_escape(final_url)}" '
                     f'alt="{self.html_escape(block.get("alt", ""))}" /></p>'
                 )
                 continue
@@ -58,6 +62,16 @@ class Publisher:
             else:
                 parts.append(f"<{tag}>{self.html_escape(text)}</{tag}>")
         return "".join(parts)
+
+    def _upload_image_to_cos(self, image_url):
+        """Upload an image from URL to COS. Returns COS URL or empty string on failure."""
+        if not image_url:
+            return ""
+        try:
+            return self.cos.upload_cover_from_url(image_url)
+        except Exception as exc:
+            log.warning("Failed to upload image %s to COS: %s", image_url[:50], exc)
+            return ""
 
     @staticmethod
     def build_abstract(article):
