@@ -123,12 +123,7 @@ class OdailyScraper(BaseScraper):
             if in_ai_summary:
                 continue
 
-            # Get text content
-            text = p.get_text(strip=True)
-            if not text:
-                continue
-
-            # Check for images first
+            # Check for images first (add them regardless of text)
             imgs = p.find_all('img')
             if imgs:
                 for img in imgs:
@@ -139,8 +134,10 @@ class OdailyScraper(BaseScraper):
                             src = "https://www.odaily.news" + src
                         blocks.append({"type": "img", "src": src})
 
-            # Add text block
-            blocks.append({"type": "p", "text": text})
+            # Get text content
+            text = p.get_text(strip=True)
+            if text:
+                blocks.append({"type": "p", "text": text})
 
         # Also look for headings and standalone images
         for tag in ['h2', 'h3', 'h4']:
