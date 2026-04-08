@@ -13,6 +13,7 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     from .techflow import TechFlowScraper
     from .blockbeats import BlockBeatsScraper
     from .chaincatcher import ChainCatcherScraper
+    from .odaily import OdailyScraper
 
     scrapers = {}
     sources_cfg = cfg.get("sources", {})
@@ -37,5 +38,10 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     if "chaincatcher" in sources_cfg:
         cc_dir = base_dir / paths_cfg.get("chaincatcher_output", "output/chaincatcher_articles")
         scrapers["chaincatcher"] = ChainCatcherScraper(sources_cfg["chaincatcher"], session, cc_dir)
+
+    # Odaily
+    if "odaily" in sources_cfg:
+        odaily_dir = base_dir / paths_cfg.get("odaily_output", "output/odaily_articles")
+        scrapers["odaily"] = OdailyScraper(sources_cfg["odaily"], session, odaily_dir)
 
     return scrapers

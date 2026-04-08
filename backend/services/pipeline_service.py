@@ -287,7 +287,7 @@ class PipelineService:
     def run(self, source="all", since_today_0700=False, republish_ids=None,
             skip_fetch=False, refetch_stcn_urls=None, refetch_techflow_ids=None,
             refetch_blockbeats_urls=None, refetch_chaincatcher_urls=None,
-            dry_run=False, republish_refetched=False) -> dict:
+            refetch_odaily_urls=None, dry_run=False, republish_refetched=False) -> dict:
         """Run the full pipeline. Returns result dict."""
         started = datetime.now()
         log.info("Pipeline started: source=%s dry_run=%s", source, dry_run)
@@ -299,11 +299,11 @@ class PipelineService:
             state.setdefault("published_ids", []).extend(db_published)
             state["published_ids"] = sorted(set(state["published_ids"]))
 
-        refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls or refetch_chaincatcher_urls)
+        refetch_mode = bool(refetch_stcn_urls or refetch_techflow_ids or refetch_blockbeats_urls or refetch_chaincatcher_urls or refetch_odaily_urls)
         refreshed = []
 
         if refetch_mode:
-            refreshed = self._do_refetch(source, refetch_stcn_urls, refetch_techflow_ids, refetch_blockbeats_urls, refetch_chaincatcher_urls)
+            refreshed = self._do_refetch(source, refetch_stcn_urls, refetch_techflow_ids, refetch_blockbeats_urls, refetch_chaincatcher_urls, refetch_odaily_urls)
         elif not skip_fetch:
             self.ingest_sources(source, state)
 
@@ -390,7 +390,7 @@ class PipelineService:
         log.info("Pipeline done: published=%d skipped=%d failed=%d %.1fs", len(published), len(skipped), len(failed), elapsed)
         return {"ok": True, "refetched": refreshed, "published": published, "skipped": skipped, "failed": failed}
 
-    def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls, chaincatcher_urls=None):
+    def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls, chaincatcher_urls=None, odaily_urls=None):
         def _gen_abstract(db, article):
             """Generate AI abstract and update DB. Returns the abstract."""
             from services.llm import generate_abstract
@@ -461,6 +461,20 @@ class PipelineService:
                         refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
                     except Exception as e:
                         log.error("Refetch ChainCatcher %s failed: %s", url, e)
+        if source in ("odaily", "all") and odaily_urls:
+            scraper = self.scrapers.get("odaily")
+            if scraper:
+                for url in odaily_urls:
+                    try:
+                        item = scraper.build_item_from_url(url)
+                        article = scraper.fetch_detail(item)
+                        path = scraper.save(article)
+                        if self.database:
+                            self.database.insert_or_update(article)
+                            _gen_abstract(self.database, article)
+                        refreshed.append({"id": article.get("article_id_full", ""), "path": str(path)})
+                    except Exception as e:
+                        log.error("Refetch Odaily %s failed: %s", url, e)
         return refreshed
 
     # -- Per-source scheduler helpers --
