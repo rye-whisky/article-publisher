@@ -22,7 +22,7 @@ _LIST_FIELDS = {
 @router.get("/articles")
 def list_articles(
     request: Request,
-    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|chaincatcher|all)$"),
+    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|chaincatcher|odaily|all)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
@@ -66,7 +66,13 @@ def create_article(request: Request, req: CreateArticleRequest, _admin=Depends(r
         "raw_id": raw_id,
         "title": req.title,
         "author": req.author or "",
-        "source": req.source or ("券商中国" if req.source_key == "stcn" else "深潮 TechFlow"),
+        "source": req.source or {
+            "stcn": "券商中国",
+            "techflow": "深潮 TechFlow",
+            "blockbeats": "律动 BlockBeats",
+            "chaincatcher": "链捕手",
+            "odaily": "Odaily星球日报",
+        }.get(req.source_key, req.source_key),
         "publish_time": _time.strftime("%Y-%m-%d %H:%M"),
         "original_url": req.original_url or "",
         "cover_src": req.cover_src or "",
