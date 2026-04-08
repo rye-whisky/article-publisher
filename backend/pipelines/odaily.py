@@ -101,69 +101,53 @@ class OdailyScraper(BaseScraper):
         description = desc_el.get("content", "") if desc_el else ""
 
         # Content area — Odaily uses various selectors
-        # Try different content containers
-        content = None
-        for selector in [".article-content", ".post-content", "article", "[data-content]"]:
-            content = soup.select_one(selector)
-            if content:
-                break
-
-        if not content:
-            # Fallback: find the main content area by looking for common patterns
-            content = soup.find("div", class_=re.compile(r"content|article|body", re.I))
-
-        if not content:
-            raise RuntimeError("页面中未找到文章内容区域")
+        # The actual article content is in <p> tags throughout the page
+        # AI summary is in a div with specific classes (bg-custom-F2F2F2)
+        # We need to skip the AI summary div and capture all other <p> tags
 
         # Parse blocks — handle paragraphs, headings, images, lists
         blocks = []
 
-        def _parse_children(parent):
-            for child in parent.children:
-                if not hasattr(child, "name") or not child.name:
-                    # Handle text nodes (whitespace usually)
-                    continue
-                if child.name in ("p", "h2", "h3", "h4", "h5", "h6"):
-                    # Check for images first
-                    imgs = child.find_all("img")
-                    if imgs:
-                        for img in imgs:
-                            src = img.get("src") or img.get("data-src") or ""
-                            if src and not src.startswith("data:"):
-                                # Convert relative URLs to absolute
-                                if src.startswith("/"):
-                                    src = "https://www.odaily.news" + src
-                                blocks.append({"type": "img", "src": src})
+        # Find AI summary container to skip
+        ai_summary_divs = soup.find_all('div', class_=lambda x: x and any('bg-custom-F2F2F2' in str(c) or 'dark:bg-custom-292929' in str(c) for c in x))
 
-                    # Get text content
-                    text = child.get_text(strip=True)
-                    if text:
-                        tag = child.name if child.name in ("h2", "h3", "h4") else "p"
-                        blocks.append({"type": tag, "text": text})
+        # Get all p tags from the page, excluding those in AI summary
+        all_ps = soup.find_all('p')
+        for p in all_ps:
+            # Skip if this p is inside an AI summary div
+            in_ai_summary = False
+            for ai_div in ai_summary_divs:
+                if p in ai_div.descendants:
+                    in_ai_summary = True
+                    break
+            if in_ai_summary:
+                continue
 
-                elif child.name == "img":
-                    src = child.get("src") or child.get("data-src") or ""
+            # Get text content
+            text = p.get_text(strip=True)
+            if not text:
+                continue
+
+            # Check for images first
+            imgs = p.find_all('img')
+            if imgs:
+                for img in imgs:
+                    src = img.get("src") or img.get("data-src") or ""
                     if src and not src.startswith("data:"):
+                        # Convert relative URLs to absolute
                         if src.startswith("/"):
                             src = "https://www.odaily.news" + src
                         blocks.append({"type": "img", "src": src})
 
-                elif child.name == "ul":
-                    for li in child.find_all("li", recursive=False):
-                        text = li.get_text(strip=True)
-                        if text:
-                            blocks.append({"type": "p", "text": text})
+            # Add text block
+            blocks.append({"type": "p", "text": text})
 
-                elif child.name == "blockquote":
-                    text = child.get_text(strip=True)
-                    if text:
-                        blocks.append({"type": "p", "text": text})
-
-                elif child.name == "div":
-                    # Some nested divs might contain content, try to parse
-                    _parse_children(child)
-
-        _parse_children(content)
+        # Also look for headings and standalone images
+        for tag in ['h2', 'h3', 'h4']:
+            for el in soup.find_all(tag):
+                text = el.get_text(strip=True)
+                if text:
+                    blocks.append({"type": tag, "text": text})
 
         # Add description as first block if available and blocks is empty
         if not blocks and description:
