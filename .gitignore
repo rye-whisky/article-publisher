@@ -44,3 +44,6 @@ CASE_STUDY.md
 API_DOC.md
 test_chaincatcher.py
 test_publish_chaincatcher.py
+
+# Development log (local only, do not commit)
+devlog/
