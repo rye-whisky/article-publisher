@@ -9,12 +9,13 @@ import paramiko
 from pathlib import Path
 
 
-# 服务器配置 - 密码从环境变量读取
+# 服务器配置 - 密钥从环境变量读取
 SERVER = {
-    "host": os.environ.get("DEPLOY_HOST", "REDACTED"),
-    "port": int(os.environ.get("DEPLOY_PORT", 22)),
-    "username": os.environ.get("DEPLOY_USER", "root"),
-    "password": os.environ.get("DEPLOY_PASSWORD", "REDACTED"),
+    "host": os.environ.get("DEPLOY_HOST", ""),
+    "port": int(os.environ.get("DEPLOY_PORT", "22")),
+    "username": os.environ.get("DEPLOY_USER", ""),
+    "password": os.environ.get("DEPLOY_PASSWORD", ""),
+    "key_filename": os.environ.get("DEPLOY_KEY_FILE", ""),
 }
 
 APP_DIR = "/opt/article-publisher"
@@ -70,13 +71,45 @@ def deploy():
     print("[*] 连接服务器...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(
-        hostname=SERVER["host"],
-        port=SERVER["port"],
-        username=SERVER["username"],
-        password=SERVER["password"],
-        timeout=15,
-    )
+
+    # 尝试多种认证方式
+    connected = False
+    last_error = None
+
+    # 1. 尝试指定密钥文件
+    if SERVER["key_filename"]:
+        try:
+            key_path = os.path.expanduser(SERVER["key_filename"])
+            ssh.connect(
+                hostname=SERVER["host"],
+                port=SERVER["port"],
+                username=SERVER["username"],
+                key_filename=key_path,
+                timeout=15,
+            )
+            connected = True
+            print("  [+] 使用指定密钥认证成功")
+        except Exception as e:
+            last_error = e
+
+    # 2. 尝试密码认证
+    if not connected and SERVER["password"]:
+        try:
+            ssh.connect(
+                hostname=SERVER["host"],
+                port=SERVER["port"],
+                username=SERVER["username"],
+                password=SERVER["password"],
+                timeout=15,
+            )
+            connected = True
+            print("  [+] 使用密码认证成功")
+        except Exception as e:
+            last_error = e
+
+    if not connected:
+        print(f"[!] 连接失败: {last_error}")
+        sys.exit(1)
 
     local_root = Path(__file__).resolve().parent.parent
 

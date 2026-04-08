@@ -343,86 +343,11 @@ function DashboardPage() {
         </div>
       </div>
 
-      {!isGuest && (<div className="card">
-        <div className="card-header">
-          <h2><Icon name="refresh" size={14} style={{ marginRight: 6 }} />{t('refetchByUrl')}</h2>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 13, color: 'var(--text2)' }}>
-            {t('refetchDescription')}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <select
-              id="refetch-source"
-              style={{
-                padding: '6px 10px',
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text)',
-                fontSize: 13,
-              }}
-            >
-              <option value="blockbeats">BlockBeats</option>
-              <option value="chaincatcher">ChainCatcher</option>
-            </select>
-            <input
-              id="refetch-urls"
-              type="text"
-              placeholder={t('enterUrlsPlaceholder')}
-              style={{
-                flex: 1,
-                minWidth: 200,
-                padding: '6px 10px',
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                color: 'var(--text)',
-                fontSize: 13,
-              }}
-            />
-            <button
-              className="btn btn-primary btn-sm"
-              disabled={running}
-              onClick={async () => {
-                const source = document.getElementById('refetch-source').value
-                const urlsText = document.getElementById('refetch-urls').value
-                const urls = urlsText.split('\n').map(u => u.trim()).filter(u => u)
-                if (!urls.length) {
-                  alert(t('pleaseEnterUrls'))
-                  return
-                }
-                setRunning(true)
-                try {
-                  if (source === 'blockbeats') {
-                    await api.refetch('blockbeats', [], [], urls, [])
-                  } else {
-                    await api.refetch('chaincatcher', [], [], [], urls)
-                  }
-                  document.getElementById('refetch-urls').value = ''
-                } catch (e) {
-                  alert(e.message)
-                  setRunning(false)
-                }
-              }}
-            >
-              <Icon name="refresh" size={12} /> {t('refetch')}
-            </button>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-            {t('refetchHint')}: https://www.theblockbeats.info/news/12345
-          </div>
-        </div>
-      </div>)}
 
       {lastResult && (
         <div className="card">
           <div className="card-header"><h2>{t('lastRunResult')}</h2></div>
           <div className="stats" style={{ marginBottom: 0 }}>
-            <div className="stat">
-              <div className="label">{t('refetched')}</div>
-              <div className="value" style={{ color: 'var(--info)' }}>{lastResult.refetched?.length ?? 0}</div>
-            </div>
             <div className="stat">
               <div className="label">{t('published')}</div>
               <div className="value" style={{ color: 'var(--success)' }}>{lastResult.published?.length ?? 0}</div>
