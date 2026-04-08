@@ -67,8 +67,8 @@ export const api = {
   run: (source = 'all', dryRun = false) => request('/run', {
     method: 'POST', body: JSON.stringify({ source, dry_run: dryRun }),
   }),
-  refetch: (source, stcnUrls = [], techflowIds = [], blockbeatsUrls = [], chaincatcherUrls = []) => request('/refetch', {
-    method: 'POST', body: JSON.stringify({ source, stcn_urls: stcnUrls, techflow_ids: techflowIds, blockbeats_urls: blockbeatsUrls, chaincatcher_urls: chaincatcherUrls }),
+  refetch: (source, stcnUrls = [], techflowIds = [], blockbeatsUrls = [], chaincatcherUrls = [], odailyUrls = []) => request('/refetch', {
+    method: 'POST', body: JSON.stringify({ source, stcn_urls: stcnUrls, techflow_ids: techflowIds, blockbeats_urls: blockbeatsUrls, chaincatcher_urls: chaincatcherUrls, odaily_urls: odailyUrls }),
   }),
 
   // Logs

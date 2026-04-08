@@ -18,6 +18,7 @@ export const translations = {
     techFlowOnly: '仅深潮',
     blockBeatsOnly: '仅律动',
     chainCatcherOnly: '仅链捕手',
+    odailyOnly: '仅星球日报',
     dryRun: '模拟运行',
     lastRunResult: '上次运行结果',
     published: '已推送',
@@ -45,6 +46,7 @@ export const translations = {
     sourceName_techflow: '深潮 TechFlow',
     sourceName_blockbeats: '律动 BlockBeats',
     sourceName_chaincatcher: '链捕手',
+    sourceName_odaily: '星球日报',
 
     // Articles
     source: '来源',
@@ -147,6 +149,7 @@ export const translations = {
     techFlowOnly: 'TechFlow Only',
     blockBeatsOnly: 'BlockBeats Only',
     chainCatcherOnly: 'ChainCatcher Only',
+    odailyOnly: 'Odaily Only',
     dryRun: 'Dry Run',
     lastRunResult: 'Last Run Result',
     published: 'Pushed',
@@ -174,6 +177,7 @@ export const translations = {
     sourceName_techflow: 'TechFlow',
     sourceName_blockbeats: 'BlockBeats',
     sourceName_chaincatcher: 'ChainCatcher',
+    sourceName_odaily: 'Odaily',
 
     source: 'Source',
     title: 'Title',
