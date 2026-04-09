@@ -41,6 +41,21 @@ def get_settings():
     return result
 
 
+@router.get("/settings/llm-tasks")
+def get_llm_tasks():
+    """List available LLM tasks and their current config (keys masked)."""
+    from services.llm_service import LLMService
+    tasks = LLMService.list_tasks()
+    result = {}
+    svc = LLMService(_db)
+    for task_id, task_name in tasks.items():
+        result[task_id] = {
+            "name": task_name,
+            "config": svc.get_task_settings(task_id),
+        }
+    return {"tasks": result, "factories": LLMService.list_factories()}
+
+
 @router.put("/settings")
 def update_settings(req: SettingsUpdate, _admin=Depends(require_admin)):
     """Batch update settings."""
@@ -48,54 +63,25 @@ def update_settings(req: SettingsUpdate, _admin=Depends(require_admin)):
     return {"ok": True}
 
 
+@router.post("/settings/test-llm/{task}")
+async def test_llm_task(task: str, _admin=Depends(require_admin)):
+    """Test LLM connection for a specific task (abstract, edit, etc.)."""
+    import asyncio
+    from services.llm_service import LLMService
+
+    svc = LLMService(_db)
+    result = await asyncio.get_event_loop().run_in_executor(None, svc.test_connection, task)
+
+    if result["ok"]:
+        return {"ok": True, "task": task, "reply": result["reply"]}
+    else:
+        raise HTTPException(status_code=502, detail=result["error"] or "连接失败")
+
+
 @router.post("/settings/test-llm")
 async def test_llm(_admin=Depends(require_admin)):
-    """Test LLM connection using stored settings."""
-    import asyncio
-
-    api_key = _db.get_setting("llm_api_key") or ""
-    api_url = _db.get_setting("llm_api_url") or ""
-    model = _db.get_setting("llm_model") or ""
-
-    if not api_url or not api_key or not model:
-        raise HTTPException(status_code=400, detail="请先完整填写 API URL、API Key 和模型名称")
-
-    # Normalize URL: append /chat/completions if not present
-    url = api_url.rstrip("/")
-    if not url.endswith("/chat/completions"):
-        url += "/chat/completions"
-
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "Hi, reply with just 'OK'."}],
-        "max_tokens": 8,
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code == 200:
-            body = resp.json()
-            reply = ""
-            choices = body.get("choices", [])
-            if choices:
-                reply = choices[0].get("message", {}).get("content", "")
-            return {"ok": True, "model": model, "reply": reply[:100]}
-        else:
-            detail = resp.text[:200]
-            raise HTTPException(status_code=502, detail=f"API 返回 {resp.status_code}: {detail}")
-    except httpx.ConnectError:
-        raise HTTPException(status_code=502, detail=f"无法连接到 {api_url}")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=502, detail="请求超时（15s）")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)[:200])
+    """Test LLM connection (legacy, defaults to abstract task)."""
+    return await test_llm_task("abstract", _admin)
 
 
 # -- Auth extras --
