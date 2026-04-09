@@ -62,7 +62,9 @@ def generate_abstract(article: dict, db: ArticleDatabase) -> str:
 
     try:
         svc = _get_llm_service(db)
-        abstract = svc.chat("abstract", ABSTRACT_SYSTEM_PROMPT, source_text,
+        # Try to get custom prompt from database
+        custom_prompt = db.get_setting("prompt_abstract") or ABSTRACT_SYSTEM_PROMPT
+        abstract = svc.chat("abstract", custom_prompt, source_text,
                             max_tokens=512, temperature=0.3)
         if abstract:
             # Extract final summary from reasoning models
@@ -82,15 +84,24 @@ def generate_abstract(article: dict, db: ArticleDatabase) -> str:
 
 # ───────────────────────── Article editing ─────────────────────────
 
-EDIT_SYSTEM_PROMPT = (
-    "你是专业的区块链与加密货币领域编辑。对用户提供的文章正文进行编辑润色：\n"
-    "1. 修正语法和拼写错误\n"
-    "2. 优化段落结构和语句流畅度\n"
-    "3. 保持原文意思和信息完全不变\n"
-    "4. 保留原文 HTML 标签结构（如 <h2>、<p>、<strong> 等）\n"
-    "5. 不添加任何原文没有的内容，不删减任何信息\n"
-    "6. 仅返回编辑后的正文 HTML，不要添加解释说明\n"
-)
+EDIT_SYSTEM_PROMPT = """你是专业的区块链与加密货币领域内容编辑。对用户提供的文章正文进行编辑润色。
+
+【重要】输出格式要求：
+- 必须输出纯 HTML 格式，不能使用 Markdown 语法
+- 保留所有 HTML 标签：<h2>、<h3>、<h4>、<p>、<strong>、<em>、<a> 等
+- 禁止使用 Markdown 标记：### 标题、**粗体**、*斜体*、[链接](url) 等
+- 输出应该是可以直接嵌入网页的 HTML 代码
+
+编辑规则：
+1. 修正语法和拼写错误
+2. 优化段落结构和语句流畅度，使表达更专业
+3. 保持原文意思和信息完全不变
+4. 不添加任何原文没有的内容，不删减任何信息
+5. 仅返回编辑后的 HTML 代码，不要添加任何解释或前言
+
+示例：
+输入: <h2>预测市场</h2><p>预测市场是<strong>未来</strong>的方向。</p>
+输出: <h2>预测市场的发展前景</h2><p>预测市场代表了金融科技发展的<strong>重要趋势</strong>。</p>"""
 
 
 def edit_article(article: dict, db: ArticleDatabase,
@@ -115,6 +126,9 @@ def edit_article(article: dict, db: ArticleDatabase,
         return None
 
     source_html = "\n".join(text_blocks)
+    # Try custom prompt first, then database setting, then default
+    if not custom_prompt:
+        custom_prompt = db.get_setting("prompt_edit")
     system_prompt = custom_prompt or EDIT_SYSTEM_PROMPT
 
     try:
@@ -142,6 +156,9 @@ def ai_edit_text(body_text: str, db: ArticleDatabase,
     if not body_text or not body_text.strip():
         return None
 
+    # Try system prompt first, then database setting, then default
+    if not system_prompt:
+        system_prompt = db.get_setting("prompt_edit")
     prompt = system_prompt or EDIT_SYSTEM_PROMPT
     try:
         svc = _get_llm_service(db)
