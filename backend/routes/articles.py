@@ -126,3 +126,79 @@ def delete_from_state(request: Request, article_id: str, _admin=Depends(require_
         svc.save_state(state)
         return {"ok": True, "removed": article_id}
     raise HTTPException(404, f"{article_id} not in state")
+
+
+@router.post("/articles/{article_id}/ai-edit")
+async def ai_edit_article(request: Request, article_id: str, _admin=Depends(require_admin)):
+    """AI-edit an article's body text. Returns edited text without saving."""
+    from pydantic import BaseModel
+
+    class AiEditRequest(BaseModel):
+        system_prompt: str = ""
+        user_prompt: str = ""
+
+    raw = await request.json()
+    system_prompt = raw.get("system_prompt", "")
+    user_prompt = raw.get("user_prompt", "")
+
+    svc = request.app.state.pipeline_service
+    article = svc.article_store.get_article(article_id)
+    if not article:
+        raise HTTPException(404, f"Article {article_id} not found")
+
+    # Build body text from blocks
+    text_parts = []
+    for b in article.get("blocks", []):
+        if b.get("type") != "img" and b.get("text"):
+            tag = b.get("tag", b.get("type", "p"))
+            text = b.get("text", "").strip()
+            if text:
+                text_parts.append(f"<{tag}>{text}</{tag}>")
+    body_text = "\n".join(text_parts)
+    if not body_text.strip():
+        raise HTTPException(400, "文章正文为空")
+
+    # Merge prompts
+    final_prompt = system_prompt or ""
+    if user_prompt:
+        final_prompt = f"{final_prompt}\n\n{user_prompt}" if final_prompt else user_prompt
+
+    from services.llm import ai_edit_text
+    edited = ai_edit_text(body_text, svc.database, system_prompt=final_prompt or None)
+    if not edited:
+        raise HTTPException(502, "AI 编辑失败，请检查 LLM 配置")
+
+    return {"ok": True, "edited_text": edited}
+
+
+@router.post("/articles/{article_id}/republish")
+def republish_article(request: Request, article_id: str, _admin=Depends(require_admin)):
+    """Republish an article to CMS."""
+    svc = request.app.state.pipeline_service
+    article = svc.article_store.get_article(article_id)
+    if not article:
+        raise HTTPException(404, f"Article {article_id} not found")
+
+    # Enrich abstract from DB if available
+    if svc.database:
+        db_lookup_id = article_id.split(":")[-1] if ":" in article_id else article_id
+        db_art = svc.database.get_by_article_id(db_lookup_id)
+        if db_art and db_art.get("abstract"):
+            article["abstract"] = db_art["abstract"]
+
+    try:
+        result = svc.publisher.publish(article)
+        # Mark as published
+        state = svc.load_state()
+        ids = set(state.get("published_ids", []))
+        ids.add(article_id)
+        state["published_ids"] = sorted(ids)
+        svc.save_state(state)
+        if svc.database:
+            svc.database.mark_published(
+                article_id.split(":")[-1] if ":" in article_id else article_id,
+                result["cms_id"],
+            )
+        return {"ok": True, "cms_id": result["cms_id"], "title": article.get("title", "")}
+    except Exception as e:
+        raise HTTPException(502, f"推送失败: {str(e)[:200]}")

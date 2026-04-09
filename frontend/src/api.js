@@ -89,6 +89,14 @@ export const api = {
     method: 'PUT', body: JSON.stringify({ settings }),
   }),
   testLlm: () => request('/settings/test-llm', { method: 'POST' }),
+  testLlmTask: (task) => request(`/settings/test-llm/${task}`, { method: 'POST' }),
+  getLlmTasks: () => request('/settings/llm-tasks'),
+
+  // AI Edit
+  aiEditArticle: (id, systemPrompt, userPrompt) => request(`/articles/${encodeURIComponent(id)}/ai-edit`, {
+    method: 'POST', body: JSON.stringify({ system_prompt: systemPrompt, user_prompt: userPrompt }),
+  }),
+  republishArticle: (id) => request(`/articles/${encodeURIComponent(id)}/republish`, { method: 'POST' }),
   getProfile: () => request('/auth/profile'),
   updateProfile: (username) => request('/auth/profile', {
     method: 'PUT', body: JSON.stringify({ username }),

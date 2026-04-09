@@ -22,6 +22,8 @@ const Icon = ({ name, size = 16 }) => {
     up: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>,
     down: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
     image: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+    sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>,
+    send: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   }
   return icons[name] || null
 }
@@ -394,22 +396,54 @@ function ArticleEditor({ article, onSave, onCancel }) {
   const [sourceKey, setSourceKey] = useState(article?.source_key || 'techflow')
   const [saving, setSaving] = useState(false)
 
+  // AI Edit panel state
+  const [promptEdit, setPromptEdit] = useState('')  // Prompt 1 from settings
+  const [prompt2, setPrompt2] = useState('')         // Prompt 2 user input
+  const [aiEditing, setAiEditing] = useState(false)
+  const [aiResult, setAiResult] = useState('')
+  const [showAiPanel, setShowAiPanel] = useState(false)
+
+  // Load Prompt 1 from settings on mount
+  useEffect(() => {
+    api.getSettings().then(data => {
+      setPromptEdit(data.prompt_edit || '')
+    }).catch(() => {})
+  }, [])
+
+  const parseBlocks = (text) => text.split(/\n\n+/).filter(s => s.trim()).map(paragraph => {
+    const imgMatch = paragraph.match(/^!\[([^\]]*)\]\(([^)]+)\)$/)
+    if (imgMatch) return { type: 'img', alt: imgMatch[1], src: imgMatch[2] }
+    return { type: 'p', text: paragraph.trim() }
+  })
+
   const handleSave = async () => {
     if (!title.trim()) return
     setSaving(true)
     try {
-      // Parse body text into blocks
-      const blocks = body.split(/\n\n+/).filter(s => s.trim()).map(paragraph => {
-        const imgMatch = paragraph.match(/^!\[([^\]]*)\]\(([^)]+)\)$/)
-        if (imgMatch) return { type: 'img', alt: imgMatch[1], src: imgMatch[2] }
-        return { type: 'p', text: paragraph.trim() }
-      })
+      const blocks = parseBlocks(body)
       const data = { title, cover_src: coverSrc, abstract, blocks, source_key: sourceKey }
       if (isEdit) {
         await api.updateArticle(article.article_id, data)
       } else {
         await api.createArticle(data)
       }
+      onSave()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSaveAndPush = async () => {
+    if (!isEdit) return
+    setSaving(true)
+    try {
+      const blocks = parseBlocks(body)
+      const data = { title, cover_src: coverSrc, abstract, blocks, source_key: sourceKey }
+      await api.updateArticle(article.article_id, data)
+      const result = await api.republishArticle(article.article_id)
+      alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
       onSave()
     } catch (e) {
       alert(e.message)
@@ -429,11 +463,47 @@ function ArticleEditor({ article, onSave, onCancel }) {
     }
   }
 
+  const handleAiEdit = async () => {
+    if (!isEdit || !body.trim()) return
+    setAiEditing(true)
+    setAiResult('')
+    try {
+      const result = await api.aiEditArticle(article.article_id, promptEdit, prompt2)
+      setAiResult(result.edited_text || '')
+    } catch (e) {
+      alert(t('testFailed') + ': ' + e.message)
+    } finally {
+      setAiEditing(false)
+    }
+  }
+
+  const handleApplyEdit = () => {
+    if (!aiResult) return
+    if (!confirm(t('applyEdit') + '?')) return
+    setBody(aiResult)
+    setAiResult('')
+    setPrompt2('')
+  }
+
+  const inputStyle = {
+    width: '100%', padding: '10px 12px', background: 'var(--surface)',
+    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+    color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box',
+  }
+
   return (
     <div className="editor-page">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>{isEdit ? t('editArticle') : t('createArticle')}</h1>
-        <button className="btn btn-outline btn-sm" onClick={onCancel}>&larr; {t('back')}</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isEdit && (
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAiPanel(!showAiPanel)}
+              style={{ background: showAiPanel ? 'var(--primary)' : undefined, color: showAiPanel ? 'white' : undefined }}>
+              <Icon name="sparkles" size={14} /> {t('aiEdit')}
+            </button>
+          )}
+          <button className="btn btn-outline btn-sm" onClick={onCancel}>&larr; {t('back')}</button>
+        </div>
       </div>
 
       {!isEdit && (
@@ -446,43 +516,96 @@ function ArticleEditor({ article, onSave, onCancel }) {
         </div>
       )}
 
-      <div className="card">
-        <div className="editor-field">
-          <label>{t('title')}</label>
-          <input id="editor-title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder={t('title')} />
-        </div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        {/* Left: main editor */}
+        <div className="card" style={{ flex: 1, minWidth: 0 }}>
+          <div className="editor-field">
+            <label>{t('title')}</label>
+            <input id="editor-title" type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder={t('title')} />
+          </div>
 
-        <div className="editor-field">
-          <label>{t('coverImage')}</label>
-          <input type="text" value={coverSrc} onChange={e => setCoverSrc(e.target.value)} placeholder="URL" />
-          {coverSrc && (
-            <div className="cover-preview">
-              <img src={coverSrc} alt="cover" />
-            </div>
-          )}
-        </div>
+          <div className="editor-field">
+            <label>{t('coverImage')}</label>
+            <input type="text" value={coverSrc} onChange={e => setCoverSrc(e.target.value)} placeholder="URL" />
+            {coverSrc && (
+              <div className="cover-preview">
+                <img src={coverSrc} alt="cover" />
+              </div>
+            )}
+          </div>
 
-        <div className="editor-field">
-          <label>{t('abstract')}</label>
-          <textarea value={abstract} onChange={e => setAbstract(e.target.value)} rows={3} />
-        </div>
+          <div className="editor-field">
+            <label>{t('abstract')}</label>
+            <textarea value={abstract} onChange={e => setAbstract(e.target.value)} rows={3} />
+          </div>
 
-        <div className="editor-field">
-          <label>{t('content')}</label>
-          <textarea value={body} onChange={e => setBody(e.target.value)} rows={15} placeholder={t('content')} style={{ minHeight: 300 }} />
-        </div>
+          <div className="editor-field">
+            <label>{t('content')}</label>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={15} placeholder={t('content')} style={{ minHeight: 300 }} />
+          </div>
 
-        <div className="editor-actions">
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !title.trim()}>
-            {saving ? t('saving') : t('save')}
-          </button>
-          <button className="btn btn-outline" onClick={onCancel}>{t('cancel')}</button>
-          {isEdit && (
-            <button className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={handleDelete}>
-              <Icon name="trash" size={14} /> {t('deleteArticle')}
+          <div className="editor-actions">
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving || !title.trim()}>
+              {saving ? t('saving') : t('save')}
             </button>
-          )}
+            {isEdit && (
+              <button className="btn btn-outline" onClick={handleSaveAndPush} disabled={saving || !title.trim()}>
+                <Icon name="send" size={14} /> {saving ? t('saving') : t('saveAndPush')}
+              </button>
+            )}
+            <button className="btn btn-outline" onClick={onCancel}>{t('cancel')}</button>
+            {isEdit && (
+              <button className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={handleDelete}>
+                <Icon name="trash" size={14} /> {t('deleteArticle')}
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Right: AI Edit panel */}
+        {showAiPanel && isEdit && (
+          <div className="card" style={{ width: 380, flexShrink: 0, position: 'sticky', top: 20 }}>
+            <h3 style={{ marginBottom: 12, fontSize: 16 }}>
+              <Icon name="sparkles" size={16} /> {t('aiEdit')}
+            </h3>
+
+            {/* Prompt 2 input */}
+            <label style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
+              {t('prompt2')}
+            </label>
+            <textarea
+              value={prompt2}
+              onChange={e => setPrompt2(e.target.value)}
+              rows={4}
+              placeholder={t('prompt2Placeholder')}
+              style={{ ...inputStyle, marginBottom: 12, resize: 'vertical' }}
+            />
+
+            {/* Edit button */}
+            <button className="btn btn-primary" style={{ width: '100%', marginBottom: 16 }}
+              onClick={handleAiEdit} disabled={aiEditing || !body.trim()}>
+              {aiEditing ? t('aiEditing') : t('aiEditBtn')}
+            </button>
+
+            {/* Result area */}
+            {aiResult && (
+              <>
+                <label style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4, display: 'block' }}>
+                  {t('aiEditResult')}
+                </label>
+                <textarea
+                  value={aiResult}
+                  readOnly
+                  rows={10}
+                  style={{ ...inputStyle, marginBottom: 12, background: 'var(--bg)', resize: 'vertical' }}
+                />
+                <button className="btn btn-outline" style={{ width: '100%' }} onClick={handleApplyEdit}>
+                  {t('applyEdit')}
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -579,6 +702,17 @@ function ArticlesPage() {
           <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
             <Icon name="edit" size={14} /> {t('editArticle')}
           </button>
+          {a.published && (
+            <button className="btn btn-outline btn-sm" onClick={async () => {
+              if (!confirm(t('republishConfirm'))) return
+              try {
+                const result = await api.republishArticle(a.article_id)
+                alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
+              } catch (e) { alert(e.message) }
+            }}>
+              <Icon name="send" size={14} /> {t('republish')}
+            </button>
+          )}
           <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white', border: 'none' }} onClick={async () => {
             if (!confirm(t('confirmDelete'))) return
             try { await api.deleteArticle(a.article_id); setSelected(null); setDetailArticle(null); fetchArticles() } catch (e) { alert(e.message) }
@@ -745,6 +879,80 @@ function LogsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Prompt Management Page
+// ---------------------------------------------------------------------------
+
+function PromptPage() {
+  const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
+  const [abstractPrompt, setAbstractPrompt] = useState('')
+  const [editPrompt, setEditPrompt] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    api.getSettings().then(data => {
+      setAbstractPrompt(data.prompt_abstract || '')
+      setEditPrompt(data.prompt_edit || '')
+    }).catch(console.error).finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await api.updateSettings({ prompt_abstract: abstractPrompt, prompt_edit: editPrompt })
+      alert(t('saveSuccess'))
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <div className="empty">{t('loading')}</div>
+
+  return (
+    <div className="settings-page">
+      <h1>{t('promptManage')}</h1>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>{t('promptAbstract')}</h2></div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+          {t('promptAbstractDesc')}
+        </p>
+        <textarea
+          value={abstractPrompt}
+          onChange={e => setAbstractPrompt(e.target.value)}
+          rows={6}
+          placeholder={t('promptAbstract')}
+          style={{ width: '100%', padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
+        />
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>{t('promptEdit')}</h2></div>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+          {t('promptEditDesc')}
+        </p>
+        <textarea
+          value={editPrompt}
+          onChange={e => setEditPrompt(e.target.value)}
+          rows={8}
+          placeholder={t('promptEdit')}
+          style={{ width: '100%', padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
+        />
+      </div>
+
+      {!isGuest && (
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? '...' : t('save')}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Profile Page (full page — username, password, AI config)
 // ---------------------------------------------------------------------------
 function ProfilePage({ onLogout }) {
@@ -797,49 +1005,82 @@ function ProfilePage({ onLogout }) {
     }
   }
 
-  // -- AI config section --
-  const [aiSettings, setAiSettings] = useState({ llm_api_url: '', llm_api_key: '', llm_model: '' })
-  const [aiLoading, setAiLoading] = useState(true)
-  const [aiSaving, setAiSaving] = useState(false)
-  const [aiTesting, setAiTesting] = useState(false)
+  // -- AI config section (multi-model) --
+  const [llmTaskTab, setLlmTaskTab] = useState('abstract')
+  const [llmTasks, setLlmTasks] = useState({})
+  const [llmFactories, setLlmFactories] = useState({})
+  const [llmLoading, setLlmLoading] = useState(true)
+  const [llmSaving, setLlmSaving] = useState({})
+  const [llmTesting, setLlmTesting] = useState({})
+  // Per-task form state: { abstract: { factory, api_url, api_key, model }, edit: { ... } }
+  const [llmForms, setLlmForms] = useState({})
 
   useEffect(() => {
-    api.getSettings().then(data => {
-      setAiSettings({
-        llm_api_url: data.llm_api_url || '',
-        llm_api_key: data.llm_api_key || '',
-        llm_model: data.llm_model || '',
-      })
-    }).catch(console.error).finally(() => setAiLoading(false))
+    api.getLlmTasks().then(data => {
+      setLlmTasks(data.tasks || {})
+      setLlmFactories(data.factories || {})
+      // Initialize form state from resolved config
+      const forms = {}
+      for (const [taskId, info] of Object.entries(data.tasks || {})) {
+        const cfg = info.config || {}
+        forms[taskId] = {
+          factory: cfg.factory || 'OpenAI',
+          api_url: cfg.api_url || '',
+          api_key: '',  // never pre-fill key (masked)
+          model: cfg.model || '',
+        }
+      }
+      setLlmForms(forms)
+    }).catch(console.error).finally(() => setLlmLoading(false))
   }, [])
 
-  const handleSaveAi = async () => {
-    setAiSaving(true)
+  const handleFactoryChange = (task, factory) => {
+    const defaultBase = llmFactories[factory] || ''
+    setLlmForms(p => ({
+      ...p,
+      [task]: { ...p[task], factory, api_url: defaultBase || p[task].api_url },
+    }))
+  }
+
+  const handleSaveLlm = async (task) => {
+    setLlmSaving(p => ({ ...p, [task]: true }))
     try {
-      await api.updateSettings(aiSettings)
+      const form = llmForms[task] || {}
+      const updates = {}
+      for (const [field, val] of Object.entries(form)) {
+        if (field === 'api_key' && (!val || val.startsWith('*'))) continue  // skip masked/empty
+        updates[`llm_${task}_${field === 'api_url' ? 'api_url' : field}`] = val
+      }
+      await api.updateSettings(updates)
       alert(t('saveSuccess'))
     } catch (e) {
       alert(e.message)
     } finally {
-      setAiSaving(false)
+      setLlmSaving(p => ({ ...p, [task]: false }))
     }
   }
 
-  const handleTestAi = async () => {
-    // Save first, then test
-    setAiTesting(true)
+  const handleTestLlm = async (task) => {
+    setLlmTesting(p => ({ ...p, [task]: true }))
     try {
-      await api.updateSettings(aiSettings)
-      const result = await api.testLlm()
-      alert(`${t('testConnection')}: OK\nModel: ${result.model}\nReply: ${result.reply}`)
+      // Save first
+      const form = llmForms[task] || {}
+      const updates = {}
+      for (const [field, val] of Object.entries(form)) {
+        if (field === 'api_key' && (!val || val.startsWith('*'))) continue
+        updates[`llm_${task}_${field === 'api_url' ? 'api_url' : field}`] = val
+      }
+      await api.updateSettings(updates)
+      const result = await api.testLlmTask(task)
+      alert(`${t('testSuccess')}\nReply: ${result.reply}`)
     } catch (e) {
-      alert(`${t('testConnection')}: FAIL\n${e.message}`)
+      alert(`${t('testFailed')}: ${e.message}`)
     } finally {
-      setAiTesting(false)
+      setLlmTesting(p => ({ ...p, [task]: false }))
     }
   }
 
-  if (usernameLoading || aiLoading) return <div className="empty">{t('loading')}</div>
+  if (usernameLoading || llmLoading) return <div className="empty">{t('loading')}</div>
 
   return (
     <div className="settings-page">
@@ -896,44 +1137,87 @@ function ProfilePage({ onLogout }) {
         </form>
       </div>)}
 
-      {/* AI Config section */}
+      {/* AI Config section — multi-model tabs */}
       {!isGuest && (<div className="card">
         <div className="card-header"><h2>{t('llmConfig')}</h2></div>
-        <div className="settings-group">
-          <label>{t('llmApiUrl')}</label>
-          <input
-            type="text"
-            value={aiSettings.llm_api_url}
-            onChange={e => setAiSettings(p => ({ ...p, llm_api_url: e.target.value }))}
-            placeholder="https://api.openai.com/v1"
-          />
+        {/* Task tabs */}
+        <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
+          {Object.entries(llmTasks).map(([taskId, info]) => (
+            <button
+              key={taskId}
+              onClick={() => setLlmTaskTab(taskId)}
+              style={{
+                padding: '8px 20px',
+                background: llmTaskTab === taskId ? 'var(--surface)' : 'transparent',
+                border: 'none',
+                borderBottom: llmTaskTab === taskId ? '2px solid var(--primary)' : '2px solid transparent',
+                color: llmTaskTab === taskId ? 'var(--primary)' : 'var(--text)',
+                fontWeight: llmTaskTab === taskId ? 600 : 400,
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              {info.name || taskId}
+            </button>
+          ))}
         </div>
-        <div className="settings-group">
-          <label>{t('llmApiKey')}</label>
-          <input
-            type="password"
-            value={aiSettings.llm_api_key}
-            onChange={e => setAiSettings(p => ({ ...p, llm_api_key: e.target.value }))}
-            placeholder="sk-..."
-          />
-        </div>
-        <div className="settings-group">
-          <label>{t('llmModel')}</label>
-          <input
-            type="text"
-            value={aiSettings.llm_model}
-            onChange={e => setAiSettings(p => ({ ...p, llm_model: e.target.value }))}
-            placeholder="gpt-4o / claude-3-sonnet"
-          />
-        </div>
-        <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
-          <button className="btn btn-outline" onClick={handleTestAi} disabled={aiTesting}>
-            {aiTesting ? '...' : t('testConnection')}
-          </button>
-          <button className="btn btn-primary" onClick={handleSaveAi} disabled={aiSaving}>
-            {aiSaving ? '...' : t('save')}
-          </button>
-        </div>
+        {/* Form for active task */}
+        {llmForms[llmTaskTab] && (
+          <div>
+            <div className="settings-group">
+              <label>{t('llmFactory')}</label>
+              <select
+                value={llmForms[llmTaskTab].factory || 'OpenAI'}
+                onChange={e => handleFactoryChange(llmTaskTab, e.target.value)}
+                style={{ width: '100%', padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }}
+              >
+                {Object.keys(llmFactories).map(f => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+            <div className="settings-group">
+              <label>{t('llmApiUrl')}</label>
+              <input
+                type="text"
+                value={llmForms[llmTaskTab].api_url || ''}
+                onChange={e => setLlmForms(p => ({ ...p, [llmTaskTab]: { ...p[llmTaskTab], api_url: e.target.value } }))}
+                placeholder="https://api.openai.com/v1"
+              />
+            </div>
+            <div className="settings-group">
+              <label>{t('llmApiKey')}</label>
+              <input
+                type="password"
+                value={llmForms[llmTaskTab].api_key || ''}
+                onChange={e => setLlmForms(p => ({ ...p, [llmTaskTab]: { ...p[llmTaskTab], api_key: e.target.value } }))}
+                placeholder="sk-..."
+              />
+            </div>
+            <div className="settings-group">
+              <label>{t('llmModel')}</label>
+              <input
+                type="text"
+                value={llmForms[llmTaskTab].model || ''}
+                onChange={e => setLlmForms(p => ({ ...p, [llmTaskTab]: { ...p[llmTaskTab], model: e.target.value } }))}
+                placeholder="gpt-4o / deepseek-chat"
+              />
+            </div>
+            {llmTaskTab !== 'abstract' && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                {t('llmFallback')}
+              </div>
+            )}
+            <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
+              <button className="btn btn-outline" onClick={() => handleTestLlm(llmTaskTab)} disabled={!!llmTesting[llmTaskTab]}>
+                {llmTesting[llmTaskTab] ? '...' : t('testConnection')}
+              </button>
+              <button className="btn btn-primary" onClick={() => handleSaveLlm(llmTaskTab)} disabled={!!llmSaving[llmTaskTab]}>
+                {llmSaving[llmTaskTab] ? '...' : t('save')}
+              </button>
+            </div>
+          </div>
+        )}
       </div>)}
     </div>
   )
@@ -945,6 +1229,7 @@ function ProfilePage({ onLogout }) {
 const PAGES = {
   dashboard: DashboardPage,
   articles: ArticlesPage,
+  prompts: PromptPage,
   logs: LogsPage,
   profile: ProfilePage,
 }
@@ -1002,6 +1287,9 @@ function MainApp({ page, setPage, onLogout }) {
           </a>
           <a href="#" className={page === 'articles' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('articles') }}>
             <Icon name="article" /> <span>{t('articles')}</span>
+          </a>
+          <a href="#" className={page === 'prompts' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('prompts') }}>
+            <Icon name="sparkles" /> <span>{t('prompts')}</span>
           </a>
           <a href="#" className={page === 'logs' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('logs') }}>
             <Icon name="log" /> <span>{t('logs')}</span>
