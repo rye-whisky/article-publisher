@@ -16,6 +16,20 @@ from typing import Optional, List, Dict, Any
 log = logging.getLogger("pipeline")
 
 
+def _sanitize_for_gbk(text: str) -> str:
+    """Remove or replace characters that can't be encoded in GBK."""
+    if not isinstance(text, str):
+        return text
+    # Remove zero-width characters and other problematic Unicode
+    # \u200b = zero-width space, \u200c = zero-width non-joiner, \u200d = zero-width joiner
+    # \u200e = left-to-right mark, \u200f = right-to-left mark
+    # \ufeff = zero-width no-break space (BOM)
+    problematic = '\u200b\u200c\u200d\u200e\u200f\ufeff'
+    for char in problematic:
+        text = text.replace(char, '')
+    return text
+
+
 class ArticleDatabase:
     """SQLite database for storing articles.
 
@@ -35,7 +49,8 @@ class ArticleDatabase:
             self._local.conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
-                timeout=30.0
+                timeout=30.0,
+                isolation_level=None
             )
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
@@ -91,6 +106,20 @@ class ArticleDatabase:
         except Exception:
             pass  # Column already exists
 
+        # Migrate: AI article fields
+        for col_sql in [
+            "ALTER TABLE articles ADD COLUMN score INTEGER",
+            "ALTER TABLE articles ADD COLUMN tags TEXT",
+            "ALTER TABLE articles ADD COLUMN category TEXT",
+            "ALTER TABLE articles ADD COLUMN language TEXT DEFAULT 'zh'",
+            "ALTER TABLE articles ADD COLUMN one_sentence_summary TEXT",
+        ]:
+            try:
+                conn.execute(col_sql)
+            except Exception:
+                pass
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_score ON articles(score DESC)")
+
         # Settings table (key-value)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -108,16 +137,47 @@ class ArticleDatabase:
         conn = self._get_conn()
         article_id = article.get("article_id", "")
         raw_id = article.get("raw_id", article_id.split(":")[-1] if ":" in article_id else article_id)
-        blocks_json = json.dumps(article.get("blocks", []), ensure_ascii=False)
-        abstract = self._compute_abstract(article)
+
+        # Sanitize blocks content BEFORE creating JSON (fix GBK encoding error)
+        blocks = article.get("blocks", [])
+        sanitized_blocks = []
+        for block in blocks:
+            sanitized_block = dict(block)
+            if "text" in sanitized_block:
+                sanitized_block["text"] = _sanitize_for_gbk(sanitized_block["text"])
+            if "src" in sanitized_block:
+                sanitized_block["src"] = _sanitize_for_gbk(sanitized_block["src"])
+            sanitized_blocks.append(sanitized_block)
+        blocks_json = json.dumps(sanitized_blocks, ensure_ascii=True)
+
+        abstract = article.get("abstract") or self._compute_abstract(article)
+
+        # Sanitize tags before JSON encoding
+        tags = article.get("tags", [])
+        sanitized_tags = [_sanitize_for_gbk(str(tag)) for tag in tags] if tags else []
+        tags_json = json.dumps(sanitized_tags, ensure_ascii=True) if sanitized_tags else None
 
         now = datetime.now().isoformat()
+
+        # Sanitize text fields for GBK compatibility (Windows encoding issue)
+        title = _sanitize_for_gbk(article.get("title", ""))
+        source = _sanitize_for_gbk(article.get("source", ""))
+        author = _sanitize_for_gbk(article.get("author", ""))
+        publish_time = _sanitize_for_gbk(article.get("publish_time", ""))
+        original_url = _sanitize_for_gbk(article.get("original_url", ""))
+        cover_src = _sanitize_for_gbk(article.get("cover_src", ""))
+        abstract = _sanitize_for_gbk(abstract)
+        one_sentence_summary = _sanitize_for_gbk(article.get("one_sentence_summary", ""))
+        category = _sanitize_for_gbk(article.get("category", ""))
+        language = _sanitize_for_gbk(article.get("language", "zh"))
 
         conn.execute("""
             INSERT INTO articles (
                 article_id, source_key, raw_id, title, source, author,
-                publish_time, original_url, cover_src, blocks, abstract, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                publish_time, original_url, cover_src, blocks, abstract,
+                score, tags, category, language, one_sentence_summary,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(article_id) DO UPDATE SET
                 title = excluded.title,
                 author = excluded.author,
@@ -126,19 +186,29 @@ class ArticleDatabase:
                 cover_src = excluded.cover_src,
                 blocks = excluded.blocks,
                 abstract = excluded.abstract,
+                score = excluded.score,
+                tags = excluded.tags,
+                category = excluded.category,
+                language = excluded.language,
+                one_sentence_summary = excluded.one_sentence_summary,
                 updated_at = excluded.updated_at
         """, (
             article_id,
             article.get("source_key", ""),
             raw_id,
-            article.get("title", ""),
-            article.get("source", ""),
-            article.get("author", ""),
-            article.get("publish_time", ""),
-            article.get("original_url", ""),
-            article.get("cover_src", ""),
+            title,
+            source,
+            author,
+            publish_time,
+            original_url,
+            cover_src,
             blocks_json,
             abstract,
+            article.get("score"),
+            tags_json,
+            category,
+            language,
+            one_sentence_summary,
             now,
             now
         ))
@@ -221,6 +291,18 @@ class ArticleDatabase:
         conn.commit()
         return cursor.rowcount > 0
 
+    def cleanup_old(self, days: int = 7) -> int:
+        """Delete articles older than N days. Returns number of deleted rows."""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "DELETE FROM articles WHERE created_at < ?",
+            (cutoff,),
+        )
+        conn.commit()
+        return cursor.rowcount
+
     def get_published_ids(self) -> List[str]:
         """Get all published article IDs."""
         conn = self._get_conn()
@@ -269,6 +351,28 @@ class ArticleDatabase:
             "published_at": row["published_at"],
             "cms_id": row["cms_id"],
         }
+        # AI article fields (may not exist in older rows)
+        try:
+            article["score"] = row["score"]
+        except (IndexError, KeyError):
+            article["score"] = None
+        try:
+            tags_str = row["tags"]
+            article["tags"] = json.loads(tags_str) if tags_str else []
+        except (IndexError, KeyError):
+            article["tags"] = []
+        try:
+            article["category"] = row["category"]
+        except (IndexError, KeyError):
+            article["category"] = None
+        try:
+            article["language"] = row["language"]
+        except (IndexError, KeyError):
+            article["language"] = "zh"
+        try:
+            article["one_sentence_summary"] = row["one_sentence_summary"]
+        except (IndexError, KeyError):
+            article["one_sentence_summary"] = None
         # Parse blocks JSON
         if row["blocks"]:
             try:
@@ -403,6 +507,47 @@ class ArticleDatabase:
         if hasattr(self._local, "conn"):
             self._local.conn.close()
             delattr(self._local, "conn")
+
+    # -- Schedule persistence (for per-source auto-scheduling) --
+
+    SCHEDULE_PREFIX = "schedule_"
+
+    def save_schedule(self, source_key: str, enabled: bool, interval_minutes: int):
+        """Save schedule config for a source."""
+        key = f"{self.SCHEDULE_PREFIX}{source_key}"
+        value = json.dumps({"enabled": enabled, "interval_minutes": interval_minutes})
+        self.set_setting(key, value)
+
+    def get_schedule(self, source_key: str) -> dict | None:
+        """Get schedule config for a source. Returns None if not set."""
+        key = f"{self.SCHEDULE_PREFIX}{source_key}"
+        value = self.get_setting(key)
+        if not value:
+            return None
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return None
+
+    def get_all_schedules(self) -> dict[str, dict]:
+        """Get all schedule configs. Returns {source_key: {enabled, interval_minutes}}."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT key, value FROM settings WHERE key LIKE ?", (f"{self.SCHEDULE_PREFIX}%",)).fetchall()
+        result = {}
+        for row in rows:
+            source_key = row["key"][len(self.SCHEDULE_PREFIX):]
+            try:
+                result[source_key] = json.loads(row["value"])
+            except json.JSONDecodeError:
+                pass
+        return result
+
+    def delete_schedule(self, source_key: str):
+        """Delete schedule config for a source."""
+        key = f"{self.SCHEDULE_PREFIX}{source_key}"
+        conn = self._get_conn()
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+        conn.commit()
 
 
 # Singleton instance

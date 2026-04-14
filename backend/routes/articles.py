@@ -111,7 +111,40 @@ def delete_article(request: Request, article_id: str, _admin=Depends(require_adm
         state["published_ids"] = ids
         svc.save_state(state)
 
+    # Remove from database so pipeline can re-fetch
+    if svc.database:
+        db_id = article_id.split(":")[-1] if ":" in article_id else article_id
+        svc.database.delete(db_id)
+
     return {"ok": True, "deleted": article_id}
+
+
+@router.post("/articles/batch-delete")
+async def batch_delete_articles(request: Request, _admin=Depends(require_admin)):
+    """Batch delete articles (file + state + DB)."""
+    body = await request.json()
+    ids = body.get("ids", [])
+    if not ids:
+        raise HTTPException(400, "No ids provided")
+    svc = request.app.state.pipeline_service
+    state = svc.load_state()
+    published_ids = state.get("published_ids", [])
+    changed = False
+    deleted = []
+    for article_id in ids:
+        ok = svc.article_store.delete_article(article_id)
+        if ok:
+            deleted.append(article_id)
+            if article_id in published_ids:
+                published_ids.remove(article_id)
+                changed = True
+            if svc.database:
+                db_id = article_id.split(":")[-1] if ":" in article_id else article_id
+                svc.database.delete(db_id)
+    if changed:
+        state["published_ids"] = published_ids
+        svc.save_state(state)
+    return {"ok": True, "deleted": deleted}
 
 
 @router.delete("/state/{article_id}")

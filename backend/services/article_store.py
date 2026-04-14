@@ -54,7 +54,7 @@ class ArticleStore:
             all_articles = []
             for scraper in self.scrapers.values():
                 all_articles.extend(scraper._iter_articles(limit=0))
-            all_articles.sort(key=lambda a: a.get("publish_time", ""), reverse=True)
+        all_articles.sort(key=lambda a: a.get("publish_time", ""), reverse=True)
 
         total = len(all_articles)
         start = (page - 1) * page_size

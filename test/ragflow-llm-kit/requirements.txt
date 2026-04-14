@@ -1,0 +1,21 @@
+# Core dependencies
+openai>=1.0.0
+tiktoken>=0.5.0
+numpy>=1.24.0
+json-repair>=0.7.0
+strenum>=0.4.0
+requests>=2.28.0
+
+# Optional: install as needed for specific providers
+# dashscope          # Tongyi-Qianwen (QWen)
+# zhipuai            # ZHIPU-AI (GLM)
+# ollama             # Ollama local models
+# google-generativeai  # Gemini
+# mistralai          # Mistral
+# cohere             # Cohere
+# voyageai           # Voyage AI
+# qianfan            # BaiduYiyan
+# replicate          # Replicate
+# boto3              # AWS Bedrock
+# huggingface_hub    # HuggingFace local
+# yarl               # GPUStack

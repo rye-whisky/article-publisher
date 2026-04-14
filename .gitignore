@@ -47,3 +47,4 @@ test_publish_chaincatcher.py
 
 # Development log (local only, do not commit)
 devlog/
+tools/OpenCLI/

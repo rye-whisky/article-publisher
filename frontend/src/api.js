@@ -70,6 +70,8 @@ export const api = {
   refetch: (source, stcnUrls = [], techflowIds = [], blockbeatsUrls = [], chaincatcherUrls = [], odailyUrls = []) => request('/refetch', {
     method: 'POST', body: JSON.stringify({ source, stcn_urls: stcnUrls, techflow_ids: techflowIds, blockbeats_urls: blockbeatsUrls, chaincatcher_urls: chaincatcherUrls, odaily_urls: odailyUrls }),
   }),
+  cancelRun: () => request('/cancel', { method: 'POST' }),
+  forceReset: () => request('/force-reset', { method: 'POST' }),
 
   // Logs
   getLogs: (lines = 200) => request(`/logs?lines=${lines}`),
@@ -103,5 +105,46 @@ export const api = {
   }),
   changePassword: (oldPassword, newPassword) => request('/auth/change-password', {
     method: 'POST', body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  }),
+
+  // Batch operations
+  batchDeleteArticles: (ids) => request('/articles/batch-delete', {
+    method: 'POST', body: JSON.stringify({ ids }),
+  }),
+
+  // AI Articles
+  getAiArticles: (params = {}) => {
+    const qs = new URLSearchParams()
+    if (params.source && params.source !== 'all') qs.set('source', params.source)
+    if (params.category) qs.set('category', params.category)
+    if (params.minScore) qs.set('min_score', params.minScore)
+    if (params.tag) qs.set('tag', params.tag)
+    if (params.page) qs.set('page', params.page)
+    if (params.pageSize) qs.set('page_size', params.pageSize)
+    return request(`/ai/articles?${qs.toString()}`)
+  },
+  getAiArticle: (id) => request(`/ai/articles/${encodeURIComponent(id)}`),
+  updateAiArticle: (id, data) => request(`/ai/articles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAiArticle: (id) => request(`/ai/articles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  batchDeleteAiArticles: (ids) => request('/ai/articles/batch-delete', {
+    method: 'POST', body: JSON.stringify({ ids }),
+  }),
+  aiEditAiArticle: (id, systemPrompt, userPrompt) => request(`/ai/articles/${encodeURIComponent(id)}/ai-edit`, {
+    method: 'POST', body: JSON.stringify({ system_prompt: systemPrompt, user_prompt: userPrompt }),
+  }),
+  ingestAiArticles: () => request('/ai/ingest', { method: 'POST' }),
+  publishAiArticle: (id) => request(`/ai/articles/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  getAiTags: () => request('/ai/tags'),
+  getAiStats: () => request('/ai/stats'),
+
+  // AI Pipeline control
+  getAiStatus: () => request('/ai/status'),
+  runAiIngest: (source = 'all') => request('/ai/run', {
+    method: 'POST', body: JSON.stringify({ source }),
+  }),
+  cancelAiRun: () => request('/ai/cancel', { method: 'POST' }),
+  getAiSchedules: () => request('/ai/schedules'),
+  updateAiSchedule: (sourceKey, enabled, intervalMinutes) => request(`/ai/schedules/${sourceKey}`, {
+    method: 'PUT', body: JSON.stringify({ enabled, interval_minutes: intervalMinutes }),
   }),
 };

@@ -178,6 +178,22 @@ function DashboardPage() {
     }
   }
 
+  const handleCancel = async () => {
+    try {
+      const res = await api.cancelRun()
+      alert(res.message)
+    } catch (e) {
+      // If cancel fails (not running), try force-reset
+      try {
+        const res = await api.forceReset()
+        alert(res.message)
+        setRunning(false)
+      } catch (e2) {
+        alert(e2.message)
+      }
+    }
+  }
+
   const handleToggleSchedule = async (sourceKey) => {
     try {
       const sched = schedules[sourceKey]
@@ -238,6 +254,11 @@ function DashboardPage() {
         </div>
         {!isGuest ? (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {running && (
+            <button className="btn btn-sm" style={{ background: 'var(--danger)', color: '#fff', border: 'none' }} onClick={handleCancel}>
+              {t('cancel')}
+            </button>
+          )}
           <button className="btn btn-primary" disabled={running} onClick={() => handleRun('all')}>
             <Icon name="play" /> {t('runAllSources')}
           </button>
@@ -380,7 +401,7 @@ function DashboardPage() {
   )
 }
 
-function ArticleEditor({ article, onSave, onCancel }) {
+function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
   const { t } = useLanguage()
   const isEdit = !!article
 
@@ -423,7 +444,8 @@ function ArticleEditor({ article, onSave, onCancel }) {
       const blocks = parseBlocks(body)
       const data = { title, cover_src: coverSrc, abstract, blocks, source_key: sourceKey }
       if (isEdit) {
-        await api.updateArticle(article.article_id, data)
+        if (isAiArticle) await api.updateAiArticle(article.article_id, data)
+        else await api.updateArticle(article.article_id, data)
       } else {
         await api.createArticle(data)
       }
@@ -441,8 +463,11 @@ function ArticleEditor({ article, onSave, onCancel }) {
     try {
       const blocks = parseBlocks(body)
       const data = { title, cover_src: coverSrc, abstract, blocks, source_key: sourceKey }
-      await api.updateArticle(article.article_id, data)
-      const result = await api.republishArticle(article.article_id)
+      if (isAiArticle) await api.updateAiArticle(article.article_id, data)
+      else await api.updateArticle(article.article_id, data)
+      const result = isAiArticle
+        ? await api.publishAiArticle(article.article_id)
+        : await api.republishArticle(article.article_id)
       alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
       onSave()
     } catch (e) {
@@ -456,7 +481,8 @@ function ArticleEditor({ article, onSave, onCancel }) {
     if (!isEdit) return
     if (!confirm(t('confirmDelete'))) return
     try {
-      await api.deleteArticle(article.article_id)
+      if (isAiArticle) await api.deleteAiArticle(article.article_id)
+      else await api.deleteArticle(article.article_id)
       onSave()
     } catch (e) {
       alert(e.message)
@@ -468,7 +494,9 @@ function ArticleEditor({ article, onSave, onCancel }) {
     setAiEditing(true)
     setAiResult('')
     try {
-      const result = await api.aiEditArticle(article.article_id, promptEdit, prompt2)
+      const result = isAiArticle
+        ? await api.aiEditAiArticle(article.article_id, promptEdit, prompt2)
+        : await api.aiEditArticle(article.article_id, promptEdit, prompt2)
       setAiResult(result.edited_text || '')
     } catch (e) {
       alert(t('testFailed') + ': ' + e.message)
@@ -623,6 +651,8 @@ function ArticlesPage() {
   const [detailArticle, setDetailArticle] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [editor, setEditor] = useState(null) // null | article object for edit, 'new' for create
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const PAGE_SIZE = 20
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -751,11 +781,43 @@ function ArticlesPage() {
   }
 
   // List view
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === articles.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(articles.map(a => a.article_id)))
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    const msg = t('confirmBatchDelete').replace('{count}', selectedIds.size)
+    if (!confirm(msg)) return
+    try {
+      await api.batchDeleteArticles([...selectedIds])
+      setSelectedIds(new Set())
+      setSelectMode(false)
+      fetchArticles()
+    } catch (e) { alert(e.message) }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>{t('articles')}</h1>
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {!isGuest && !selectMode && (
+          <button className="btn btn-outline btn-sm" onClick={() => setSelectMode(true)}>
+            {t('batchManage')}
+          </button>
+          )}
           {!isGuest && (
           <button className="btn btn-primary btn-sm" onClick={() => setEditor('new')}>
             <Icon name="plus" size={14} /> {t('createArticle')}
@@ -773,8 +835,15 @@ function ArticlesPage() {
         <>
           <div className="article-grid">
             {articles.map(a => (
-              <div key={a.article_id} className="article-card" style={{ position: 'relative' }} onClick={() => handleSelectArticle(a.article_id)}>
-                {!isGuest && (
+              <div key={a.article_id}
+                className={`article-card ${selectMode && selectedIds.has(a.article_id) ? 'selected' : ''}`}
+                style={{ position: 'relative' }}
+                onClick={() => selectMode ? toggleSelect(a.article_id) : handleSelectArticle(a.article_id)}>
+                {selectMode && (
+                  <div className={`card-checkbox ${selectedIds.has(a.article_id) ? 'checked' : ''}`}
+                    onClick={e => { e.stopPropagation(); toggleSelect(a.article_id) }} />
+                )}
+                {!isGuest && !selectMode && (
                 <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); handleEditorOpen(a.article_id) }}>
                   <Icon name="edit" size={14} />
                 </button>
@@ -814,6 +883,25 @@ function ArticlesPage() {
             </div>
           )}
         </>
+      )}
+      {selectMode && (
+        <div className="batch-bar">
+          <div className="batch-bar-info">
+            <label>
+              <div className={`card-checkbox ${selectedIds.size === articles.length && articles.length > 0 ? 'checked' : ''}`}
+                onClick={toggleSelectAll} />
+              {t('selectAll')}
+            </label>
+            <span>{t('selectedArticles').replace('{count}', selectedIds.size)}</span>
+          </div>
+          <div className="batch-bar-spacer" />
+          <button className="btn btn-danger btn-sm" disabled={selectedIds.size === 0} onClick={handleBatchDelete}>
+            <Icon name="trash" size={14} /> {t('batchDelete')} ({selectedIds.size})
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}>
+            {t('exitBatch')}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -1224,18 +1312,628 @@ function ProfilePage({ onLogout }) {
 }
 
 // ---------------------------------------------------------------------------
+// AI Articles Page
+// ---------------------------------------------------------------------------
+
+const AI_CATEGORIES = [
+  { key: '', labelZh: '全部', labelEn: 'All' },
+  { key: '人工智能', labelZh: '人工智能', labelEn: 'AI' },
+  { key: '软件编程', labelZh: '软件编程', labelEn: 'Programming' },
+  { key: '商业科技', labelZh: '商业科技', labelEn: 'Business' },
+  { key: '产品设计', labelZh: '产品设计', labelEn: 'Design' },
+  { key: '个人成长', labelZh: '个人成长', labelEn: 'Growth' },
+]
+
+function AiArticlesPage() {
+  const { t, lang } = useLanguage()
+  const isGuest = getRole() === 'guest'
+  const [source, setSource] = useState('all')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [articles, setArticles] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [ingesting, setIngesting] = useState(false)
+  const [selected, setSelected] = useState(null)
+  const [detailArticle, setDetailArticle] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [aiSources, setAiSources] = useState([])
+  const [editor, setEditor] = useState(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
+  const PAGE_SIZE = 20
+  const totalPages = Math.ceil(total / PAGE_SIZE)
+
+  const fetchArticles = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await api.getAiArticles({ source, page, pageSize: PAGE_SIZE })
+      setTotal(data.total || 0)
+      setArticles(data.articles || [])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [source, page])
+
+  useEffect(() => { setPage(1) }, [source])
+  useEffect(() => { fetchArticles() }, [fetchArticles])
+  useEffect(() => { api.getAiStats().then(d => setAiSources(d.sources || [])).catch(() => {}) }, [])
+
+  const handleIngest = async () => {
+    setIngesting(true)
+    try {
+      const result = await api.ingestAiArticles()
+      alert(t('aiIngestSuccess') + `: ${JSON.stringify(result.summary)}`)
+      fetchArticles()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setIngesting(false)
+    }
+  }
+
+  const handleEditorSave = () => {
+    setEditor(null)
+    setSelected(null)
+    setDetailArticle(null)
+    fetchArticles()
+  }
+
+  const handleSelectArticle = async (articleId) => {
+    setSelected(articleId)
+    setDetailLoading(true)
+    try {
+      const data = await api.getAiArticle(articleId)
+      setDetailArticle(data)
+    } catch (e) {
+      alert(e.message)
+      setSelected(null)
+    } finally {
+      setDetailLoading(false)
+    }
+  }
+
+  const handlePublish = async (articleId) => {
+    try {
+      const result = await api.publishAiArticle(articleId)
+      alert(t('aiPublishSuccess') + ` (CMS ID: ${result.cms_id})`)
+      // Refresh detail
+      const data = await api.getAiArticle(articleId)
+      setDetailArticle(data)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const scoreBadgeStyle = (score) => {
+    if (score >= 90) return { background: '#10b981', color: '#fff' }
+    if (score >= 80) return { background: '#3b82f6', color: '#fff' }
+    if (score >= 70) return { background: '#f59e0b', color: '#fff' }
+    return { background: 'var(--surface)', color: 'var(--text2)' }
+  }
+
+  // Editor mode
+  if (editor) {
+    return <ArticleEditor article={editor} onSave={handleEditorSave} onCancel={() => setEditor(null)} isAiArticle />
+  }
+
+  // Detail view
+  if (selected) {
+    if (detailLoading) return <div className="empty">{t('loading')}</div>
+    const a = detailArticle
+    if (!a) return null
+    return (
+      <div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <button className="btn btn-outline btn-sm" onClick={() => { setSelected(null); setDetailArticle(null) }}>
+            &larr; {t('back')}
+          </button>
+          {!isGuest && (<>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
+              <Icon name="edit" size={14} /> {t('editArticle')}
+            </button>
+            {!a.cms_id && (
+              <button className="btn btn-primary btn-sm" onClick={() => handlePublish(a.article_id)}>
+                <Icon name="send" size={14} /> {t('saveAndPush')}
+              </button>
+            )}
+            {a.cms_id && (
+              <button className="btn btn-outline btn-sm" onClick={async () => {
+                if (!confirm(t('republishConfirm'))) return
+                try {
+                  const result = await api.publishAiArticle(a.article_id)
+                  alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
+                  const data = await api.getAiArticle(a.article_id)
+                  setDetailArticle(data)
+                } catch (e) { alert(e.message) }
+              }}>
+                <Icon name="send" size={14} /> {t('republish')}
+              </button>
+            )}
+            <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white', border: 'none' }} onClick={async () => {
+              if (!confirm(t('confirmDelete'))) return
+              try { await api.deleteAiArticle(a.article_id); setSelected(null); setDetailArticle(null); fetchArticles() } catch (e) { alert(e.message) }
+            }}>
+              <Icon name="trash" size={14} /> {t('deleteArticle')}
+            </button>
+          </>)}
+          {a.cms_id && <span className="badge badge-success">{t('aiPublished')}</span>}
+        </div>
+        <div className="card">
+          <div className="article-detail">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              {a.score != null && (
+                <span style={{ ...scoreBadgeStyle(a.score), padding: '2px 10px', borderRadius: 12, fontSize: 13, fontWeight: 700 }}>
+                  {a.score}
+                </span>
+              )}
+              {a.category && <span className="badge badge-info">{a.category}</span>}
+            </div>
+            <h1>{a.title}</h1>
+            <div className="article-meta">
+              <span>{a.source}</span>
+              {a.author && <span>{t('author')}: {a.author}</span>}
+              <span>{a.publish_time}</span>
+              <a href={a.original_url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>
+                {t('original')}
+              </a>
+            </div>
+            {a.tags?.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {a.tags.map((tag, i) => (
+                  <span key={i} style={{ padding: '2px 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text2)' }}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          {a.one_sentence_summary && (
+            <div style={{ marginTop: 12, padding: '12px 16px', background: 'var(--surface)', borderRadius: 8, borderLeft: '3px solid var(--primary)', fontSize: 14 }}>
+              {a.one_sentence_summary}
+            </div>
+          )}
+          <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <div className="article-body">
+              {a.blocks?.map((b, i) => {
+                if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} style={{ maxWidth: '100%' }} /></p>
+                if (b.type === 'h2') return <h3 key={i}>{b.text}</h3>
+                if (b.type === 'h3') return <h4 key={i}>{b.text}</h4>
+                if (b.type === 'h4') return <h5 key={i}>{b.text}</h5>
+                return <p key={i}>{b.text}</p>
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // List view
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === articles.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(articles.map(a => a.article_id)))
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    const msg = t('confirmBatchDelete').replace('{count}', selectedIds.size)
+    if (!confirm(msg)) return
+    try {
+      await api.batchDeleteAiArticles([...selectedIds])
+      setSelectedIds(new Set())
+      setSelectMode(false)
+      fetchArticles()
+    } catch (e) { alert(e.message) }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700 }}>{t('aiArticles')}</h1>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!isGuest && !selectMode && (
+            <button className="btn btn-outline btn-sm" onClick={() => setSelectMode(true)}>
+              {t('batchManage')}
+            </button>
+          )}
+          {!isGuest && (
+          <button className="btn btn-primary btn-sm" disabled={ingesting} onClick={handleIngest}>
+            <Icon name="refresh" size={14} /> {ingesting ? t('aiIngesting') : t('aiIngest')}
+          </button>
+          )}
+        </div>
+      </div>
+
+      {/* Source tabs */}
+      <div className="source-select" style={{ marginBottom: 12 }}>
+        <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>
+          {t('aiAllSources')}
+        </button>
+        {aiSources.map(s => (
+          <button key={s} className={source === s ? 'active' : ''} onClick={() => setSource(s)}>
+            {t(`sourceName_${s}`) || s}
+          </button>
+        ))}
+      </div>
+
+      {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{t('aiNoArticles')}</div> : (
+        <>
+          <div className="article-grid">
+            {articles.map(a => (
+              <div key={a.article_id}
+                className={`article-card ${selectMode && selectedIds.has(a.article_id) ? 'selected' : ''}`}
+                style={{ position: 'relative' }}
+                onClick={() => selectMode ? toggleSelect(a.article_id) : handleSelectArticle(a.article_id)}>
+                {selectMode && (
+                  <div className={`card-checkbox ${selectedIds.has(a.article_id) ? 'checked' : ''}`}
+                    onClick={e => { e.stopPropagation(); toggleSelect(a.article_id) }} />
+                )}
+                {a.cover_src ? (
+                  <img className="card-cover" src={a.cover_src} alt={a.title} />
+                ) : (
+                  <div className="card-cover-placeholder">AI</div>
+                )}
+                <div className="card-body">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    {a.score != null && (
+                      <span style={{ ...scoreBadgeStyle(a.score), padding: '1px 8px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>
+                        {a.score}
+                      </span>
+                    )}
+                    {a.category && <span style={{ fontSize: 11, color: 'var(--text2)' }}>{a.category}</span>}
+                    {a.cms_id && <span className="badge badge-success" style={{ fontSize: 10, padding: '0 5px' }}>{t('aiPublished')}</span>}
+                  </div>
+                  <h3>{a.title}</h3>
+                  {a.abstract && <p className="card-abstract">{a.abstract}</p>}
+                  {a.tags?.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                      {a.tags.slice(0, 3).map((tag, i) => (
+                        <span key={i} style={{ padding: '1px 6px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 11, color: 'var(--text2)' }}>
+                          {tag}
+                        </span>
+                      ))}
+                      {a.tags.length > 3 && <span style={{ fontSize: 11, color: 'var(--text2)' }}>+{a.tags.length - 3}</span>}
+                    </div>
+                  )}
+                </div>
+                <div className="card-meta">
+                  <span>{a.author || a.source}</span>
+                  <span>{a.publish_time || ''}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20 }}>
+              <button className="btn btn-outline btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                &larr; Prev
+              </button>
+              <span style={{ fontSize: 13, color: 'var(--text2)' }}>
+                {page} / {totalPages} ({total})
+              </span>
+              <button className="btn btn-outline btn-sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                Next &rarr;
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {selectMode && (
+        <div className="batch-bar">
+          <div className="batch-bar-info">
+            <label>
+              <div className={`card-checkbox ${selectedIds.size === articles.length && articles.length > 0 ? 'checked' : ''}`}
+                onClick={toggleSelectAll} />
+              {t('selectAll')}
+            </label>
+            <span>{t('selectedArticles').replace('{count}', selectedIds.size)}</span>
+          </div>
+          <div className="batch-bar-spacer" />
+          <button className="btn btn-danger btn-sm" disabled={selectedIds.size === 0} onClick={handleBatchDelete}>
+            <Icon name="trash" size={14} /> {t('batchDelete')} ({selectedIds.size})
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={() => { setSelectMode(false); setSelectedIds(new Set()) }}>
+            {t('exitBatch')}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main App
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// AI Dashboard Page
+// ---------------------------------------------------------------------------
+function AiDashboardPage() {
+  const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [running, setRunning] = useState(false)
+  const [schedules, setSchedules] = useState({})
+  const [scheduleIntervals, setScheduleIntervals] = useState({})
+  const [categories, setCategories] = useState({})
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const [data, statsData] = await Promise.all([api.getAiStatus(), api.getAiStats()])
+      setStatus(data)
+      setRunning(data.running)
+      setSchedules(data.schedules || {})
+      setCategories(statsData.categories || {})
+      setScheduleIntervals(prev => {
+        const next = { ...prev }
+        for (const [k, v] of Object.entries(data.schedules || {})) {
+          if (next[k] === undefined) next[k] = v.interval_minutes
+        }
+        return next
+      })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchStatus(); const iv = setInterval(fetchStatus, 5000); return () => clearInterval(iv) }, [fetchStatus])
+
+  const AI_SOURCES = status?.sources || ['kr36', 'baoyu', 'claude']
+
+  const handleRun = async (source) => {
+    setRunning(true)
+    try {
+      await api.runAiIngest(source)
+    } catch (e) {
+      alert(e.message)
+      setRunning(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    try {
+      const res = await api.cancelAiRun()
+      alert(res.message)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleToggleSchedule = async (sourceKey) => {
+    try {
+      const sched = schedules[sourceKey]
+      const newEnabled = !sched?.enabled
+      const interval = scheduleIntervals[sourceKey] || sched?.interval_minutes || 60
+      const result = await api.updateAiSchedule(sourceKey, newEnabled, interval)
+      setSchedules(result.schedules || {})
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleIntervalChange = async (sourceKey, newInterval) => {
+    setScheduleIntervals(prev => ({ ...prev, [sourceKey]: newInterval }))
+    const sched = schedules[sourceKey]
+    if (sched?.enabled) {
+      try {
+        const result = await api.updateAiSchedule(sourceKey, true, newInterval)
+        setSchedules(result.schedules || {})
+      } catch (e) {
+        alert(e.message)
+      }
+    }
+  }
+
+  if (loading) return <div className="empty"><div className="spinner" /></div>
+
+  const lastResult = status?.last_result
+  const totalArticles = status?.total ?? 0
+  const published = status?.published ?? 0
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 24 }}>{t('aiDashboard')}</h1>
+
+      <div className="stats">
+        <div className="stat">
+          <div className="label">{t('aiTotalArticles')}</div>
+          <div className="value">{totalArticles}</div>
+        </div>
+        <div className="stat">
+          <div className="label">{t('aiPublishedCount')}</div>
+          <div className="value" style={{ color: 'var(--success)' }}>{published}</div>
+        </div>
+        <div className="stat">
+          <div className="label">{t('status')}</div>
+          <div className="value" style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+            {running ? (
+              <><span className="spinner" /><span style={{ color: 'var(--warning)' }}>{t('aiRunning')}</span></>
+            ) : (
+              <span style={{ color: 'var(--success)' }}>{t('aiIdle')}</span>
+            )}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">{t('lastRun')}</div>
+          <div className="value" style={{ fontSize: 13, color: 'var(--text2)' }}>{status?.started_at || t('notAvailable')}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2>{t('actions')}</h2>
+        </div>
+        {!isGuest ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {running && (
+            <button className="btn btn-sm" style={{ background: 'var(--danger)', color: '#fff', border: 'none' }} onClick={handleCancel}>
+              {t('aiCancel')}
+            </button>
+          )}
+          <button className="btn btn-primary" disabled={running} onClick={() => handleRun('all')}>
+            <Icon name="play" /> {t('aiRunAll')}
+          </button>
+          {AI_SOURCES.map(src => (
+            <button key={src} className="btn btn-outline" disabled={running} onClick={() => handleRun(src)}>
+              <Icon name="play" /> {t(`sourceName_${src}`) || src}
+            </button>
+          ))}
+        </div>
+        ) : (
+          <div style={{ color: 'var(--text2)', fontSize: 13, padding: '8px 0' }}>{t('guestModeHint')}</div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2><Icon name="clock" size={14} style={{ marginRight: 6 }} />{t('aiSourceSettings')}</h2>
+        </div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--text2)' }}>{t('source')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('interval')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('nextRun')}</th>
+                <th style={{ textAlign: 'center', padding: '8px 12px', color: 'var(--text2)' }}>{t('action')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {AI_SOURCES.map(key => {
+                const sched = schedules[key] || { enabled: false, interval_minutes: 60, next_run_time: null }
+                const srcName = t(`sourceName_${key}`) || key
+                return (
+                  <tr key={key} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '8px 12px', fontWeight: 500 }}>
+                      {srcName}
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          padding: '1px 6px',
+                          borderRadius: 3,
+                          fontSize: 11,
+                          background: sched.enabled ? 'var(--success)' : 'var(--surface)',
+                          color: sched.enabled ? '#fff' : 'var(--text2)',
+                          border: `1px solid ${sched.enabled ? 'var(--success)' : 'var(--border)'}`,
+                        }}
+                      >
+                        {sched.enabled ? t('schedulerEnabled') : t('schedulerDisabled')}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="1440"
+                          value={scheduleIntervals[key] ?? sched.interval_minutes}
+                          onChange={e => handleIntervalChange(key, Math.max(1, Math.min(1440, parseInt(e.target.value) || 1)))}
+                          disabled={isGuest}
+                          style={{
+                            width: 60,
+                            padding: '3px 6px',
+                            background: 'var(--surface)',
+                            border: `1px solid ${sched.enabled ? 'var(--success)' : 'var(--border)'}`,
+                            borderRadius: 4,
+                            color: 'var(--text)',
+                            fontSize: 13,
+                            textAlign: 'center',
+                          }}
+                        />
+                        <span style={{ color: 'var(--text2)', fontSize: 12 }}>{t('minutes')}</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px', fontSize: 12, color: sched.enabled ? 'var(--text)' : 'var(--text2)' }}>
+                      {sched.next_run_time ? new Date(sched.next_run_time).toLocaleString() : t('schedulerNotSet')}
+                    </td>
+                    <td style={{ textAlign: 'center', padding: '8px 12px' }}>
+                      {isGuest ? (
+                        <span style={{ fontSize: 12, color: 'var(--text2)' }}>&mdash;</span>
+                      ) : (
+                      <button
+                        className={`btn btn-sm ${sched.enabled ? 'btn-primary' : 'btn-outline'}`}
+                        onClick={() => handleToggleSchedule(key)}
+                        title={sched.enabled ? t('disableScheduler') : t('enableScheduler')}
+                      >
+                        {sched.enabled ? t('disable') : t('enable')}
+                      </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {lastResult && (
+        <div className="card">
+          <div className="card-header"><h2>{t('aiLastResult')}</h2></div>
+          <div style={{ padding: '0 16px 16px' }}>
+            {lastResult.summary && Object.entries(lastResult.summary).map(([src, info]) => (
+              <div key={src} style={{ display: 'flex', gap: 16, fontSize: 13, marginBottom: 4 }}>
+                <span style={{ fontWeight: 500 }}>{t(`sourceName_${src}`) || src}:</span>
+                <span style={{ color: 'var(--success)' }}>{t('aiNewArticles')}: {info.new}</span>
+                <span style={{ color: 'var(--text2)' }}>Total: {info.total}</span>
+                {info.error && <span style={{ color: 'var(--danger)' }}>{info.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {Object.keys(categories).length > 0 && (
+        <div className="card">
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>{t('aiCategory')}</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
+            {Object.entries(categories).sort((a, b) => b[1] - a[1]).map(([cat, count]) => (
+              <div key={cat} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px', background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 13 }}>
+                <span style={{ color: 'var(--text2)' }}>{cat}</span>
+                <span style={{ fontWeight: 600 }}>{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const PAGES = {
   dashboard: DashboardPage,
   articles: ArticlesPage,
+  'ai-articles': AiArticlesPage,
+  'ai-dashboard': AiDashboardPage,
   prompts: PromptPage,
   logs: LogsPage,
   profile: ProfilePage,
 }
 
 export default function App() {
-  const [page, setPage] = useState('dashboard')
+  const [page, setPage] = useState(() => {
+    // Initialize page based on saved mode
+    try {
+      const savedMode = localStorage.getItem('app_mode') || 'blockchain'
+      return savedMode === 'ai' ? 'ai-dashboard' : 'dashboard'
+    } catch {
+      return 'dashboard'
+    }
+  })
   const [authed, setAuthed] = useState(() => {
     try { return !!localStorage.getItem('auth_token') } catch { return false }
   })
@@ -1270,9 +1968,32 @@ export default function App() {
 // Separate component for logged-in state (can use hooks safely)
 function MainApp({ page, setPage, onLogout }) {
   const { t } = useLanguage()
-  const PageComponent = PAGES[page] || DashboardPage
+  const [mode, setMode] = useState(() => {
+    try { return localStorage.getItem('app_mode') || 'blockchain' } catch { return 'blockchain' }
+  })
 
-  // ProfilePage needs onLogout prop
+  const handleModeChange = (newMode) => {
+    setMode(newMode)
+    try { localStorage.setItem('app_mode', newMode) } catch {}
+    // Auto-navigate to the mode's dashboard
+    setPage(newMode === 'ai' ? 'ai-dashboard' : 'dashboard')
+  }
+
+  // Navigation items per mode
+  const blockchainNav = [
+    { key: 'dashboard', icon: 'dashboard', label: t('dashboard') },
+    { key: 'articles', icon: 'article', label: t('articles') },
+    { key: 'prompts', icon: 'sparkles', label: t('prompts') },
+    { key: 'logs', icon: 'log', label: t('logs') },
+  ]
+  const aiNav = [
+    { key: 'ai-dashboard', icon: 'dashboard', label: t('aiDashboard') },
+    { key: 'ai-articles', icon: 'article', label: t('aiArticles') },
+    { key: 'logs', icon: 'log', label: t('logs') },
+  ]
+
+  const navItems = mode === 'ai' ? aiNav : blockchainNav
+  const PageComponent = PAGES[page] || DashboardPage
   const pageProps = page === 'profile' ? { onLogout } : {}
 
   return (
@@ -1282,19 +2003,20 @@ function MainApp({ page, setPage, onLogout }) {
           <h1>{t('appName')}</h1>
         </div>
         <nav>
-          <a href="#" className={page === 'dashboard' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('dashboard') }}>
-            <Icon name="dashboard" /> <span>{t('dashboard')}</span>
-          </a>
-          <a href="#" className={page === 'articles' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('articles') }}>
-            <Icon name="article" /> <span>{t('articles')}</span>
-          </a>
-          <a href="#" className={page === 'prompts' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('prompts') }}>
-            <Icon name="sparkles" /> <span>{t('prompts')}</span>
-          </a>
-          <a href="#" className={page === 'logs' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage('logs') }}>
-            <Icon name="log" /> <span>{t('logs')}</span>
-          </a>
+          {navItems.map(item => (
+            <a href="#" key={item.key} className={page === item.key ? 'active' : ''} onClick={(e) => { e.preventDefault(); setPage(item.key) }}>
+              <Icon name={item.icon} /> <span>{item.label}</span>
+            </a>
+          ))}
         </nav>
+        <div className="sidebar-mode-switch">
+          <button className={mode === 'blockchain' ? 'active' : ''} onClick={() => handleModeChange('blockchain')}>
+            <Icon name="send" size={14} /> <span>{t('modeBlockchain')}</span>
+          </button>
+          <button className={mode === 'ai' ? 'active' : ''} onClick={() => handleModeChange('ai')}>
+            <Icon name="sparkles" size={14} /> <span>{t('modeAi')}</span>
+          </button>
+        </div>
       </aside>
       <div className="main-area">
         <Header onLogout={onLogout} onNavigateProfile={() => setPage('profile')} />

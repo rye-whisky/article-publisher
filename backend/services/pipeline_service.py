@@ -6,9 +6,10 @@ This is the canonical service used by the API routes.
 
 import json
 import logging
+import shutil
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -26,20 +27,41 @@ log = logging.getLogger("pipeline")
 # ---------------------------------------------------------------------------
 
 class RunState:
-    """Thread-safe tracker for background pipeline runs."""
+    """Thread-safe tracker for background pipeline runs.
+
+    Includes auto-timeout: if a run exceeds MAX_RUN_SECONDS,
+    it is force-reset so the system doesn't get stuck forever.
+    """
+
+    MAX_RUN_SECONDS = 600  # 10 minutes
 
     def __init__(self):
         self._lock = threading.Lock()
         self.running = False
         self.started_at: Optional[str] = None
         self.result: Optional[dict] = None
+        self._cancel_event = threading.Event()
 
     def start(self) -> bool:
         with self._lock:
             if self.running:
-                return False
+                # Check for stale run (stuck longer than timeout)
+                if self.started_at:
+                    try:
+                        started = datetime.fromisoformat(self.started_at)
+                        elapsed = (datetime.now() - started).total_seconds()
+                        if elapsed > self.MAX_RUN_SECONDS:
+                            log.warning("RunState: force-resetting stuck run (started %s, %.0fs ago)",
+                                        self.started_at, elapsed)
+                            self.running = False
+                            self.result = {"ok": False, "error": "run timed out, auto-reset"}
+                    except (ValueError, TypeError):
+                        pass
+                if self.running:
+                    return False
             self.running = True
             self.started_at = time.strftime("%Y-%m-%dT%H:%M:%S")
+            self._cancel_event.clear()
             return True
 
     def finish(self, result: dict):
@@ -47,12 +69,36 @@ class RunState:
             self.running = False
             self.result = result
 
+    def cancel(self) -> bool:
+        """Request cancellation of the running pipeline. Returns True if a run was active."""
+        with self._lock:
+            if not self.running:
+                return False
+            log.warning("RunState: cancellation requested for run started at %s", self.started_at)
+            self._cancel_event.set()
+            return True
+
+    @property
+    def cancelled(self) -> bool:
+        """Check if cancellation was requested."""
+        return self._cancel_event.is_set()
+
     def status(self) -> dict:
-        return {
-            "running": self.running,
-            "started_at": self.started_at,
-            "last_result": self.result,
-        }
+        with self._lock:
+            info = {
+                "running": self.running,
+                "started_at": self.started_at,
+                "last_result": self.result,
+            }
+            # Warn about long-running tasks
+            if self.running and self.started_at:
+                try:
+                    started = datetime.fromisoformat(self.started_at)
+                    elapsed = (datetime.now() - started).total_seconds()
+                    info["elapsed_seconds"] = int(elapsed)
+                except (ValueError, TypeError):
+                    pass
+            return info
 
 
 class SourceScheduleState:
@@ -243,15 +289,30 @@ class PipelineService:
             published_ids.update(db_published)
 
         for key, scraper in self.scrapers.items():
+            if self.run_state.cancelled:
+                log.warning("Ingest cancelled, stopping early")
+                break
             src_cfg = self.cfg.get("sources", {}).get(key, {})
             if source not in (key, "all"):
                 continue
             if not src_cfg.get("enabled", True):
                 continue
             for item in scraper.parse_list():
+                if self.run_state.cancelled:
+                    break
                 aid = f"{key}:{item['article_id']}"
+
+                # Skip if already published to CMS
                 if aid in published_ids:
                     continue
+
+                # Skip if already exists in database (fetched in a previous run)
+                if self.database:
+                    db_id = item.get("article_id", aid.split(":")[-1])
+                    existing = self.database.get_by_article_id(db_id)
+                    if existing:
+                        continue
+
                 try:
                     article = scraper.fetch_detail(item)
                     scraper.save(article)
@@ -366,6 +427,9 @@ class PipelineService:
             log.info("Dry run: would publish %d articles", len(accepted))
         else:
             for article in accepted:
+                if self.run_state.cancelled:
+                    log.warning("Publish cancelled, stopping early (%d/%d published)", len(published), len(accepted))
+                    break
                 try:
                     result = self.publisher.publish(article)
                     published.append({
@@ -388,6 +452,10 @@ class PipelineService:
 
         elapsed = (datetime.now() - started).total_seconds()
         log.info("Pipeline done: published=%d skipped=%d failed=%d %.1fs", len(published), len(skipped), len(failed), elapsed)
+
+        # Cleanup old articles (files + database) older than 7 days
+        self.cleanup_old_articles(days=7)
+
         return {"ok": True, "refetched": refreshed, "published": published, "skipped": skipped, "failed": failed}
 
     def _do_refetch(self, source, stcn_urls, techflow_ids, blockbeats_urls, chaincatcher_urls=None, odaily_urls=None):
@@ -479,6 +547,38 @@ class PipelineService:
 
     # -- Per-source scheduler helpers --
 
+    def cleanup_old_articles(self, days: int = 7) -> int:
+        """Remove article JSON files and DB records older than N days.
+
+        Scans each scraper's output_dir for JSON files whose mtime is older
+        than the cutoff, then deletes the matching DB rows.
+        Returns total number of files removed.
+        """
+        cutoff = datetime.now() - timedelta(days=days)
+        total = 0
+
+        for key, scraper in self.scrapers.items():
+            if not scraper.output_dir.exists():
+                continue
+            removed = 0
+            for f in scraper.output_dir.glob("*.json"):
+                mtime = datetime.fromtimestamp(f.stat().st_mtime)
+                if mtime < cutoff:
+                    f.unlink()
+                    scraper._article_cache.pop(f, None)
+                    removed += 1
+            if removed:
+                total += removed
+                log.info("Cleanup %s: removed %d files older than %d days", key, removed, days)
+
+        # Cleanup database
+        if self.database:
+            db_removed = self.database.cleanup_old(days)
+            if db_removed:
+                log.info("Cleanup DB: removed %d rows older than %d days", db_removed, days)
+
+        return total
+
     def _init_schedules(self):
         """Initialize SourceScheduleState for each known source."""
         for key in self.scrapers:
@@ -503,10 +603,34 @@ class PipelineService:
         if not sched:
             raise ValueError(f"Unknown source: {source_key}")
         sched.set_config(enabled, interval_minutes, run_fn=lambda: self._source_scheduler_run(source_key))
+        # Persist to database
+        if self.database:
+            self.database.save_schedule(source_key, enabled, interval_minutes)
 
     def get_source_schedules(self) -> dict:
         self._init_schedules()
         return {key: sched.status() for key, sched in self.source_schedules.items()}
+
+    def restore_schedules(self):
+        """Restore schedule configs from database and start enabled timers."""
+        if not self.database:
+            log.info("No database, skipping schedule restore")
+            return
+        self._init_schedules()
+        saved = self.database.get_all_schedules()
+        for source_key, config in saved.items():
+            if source_key not in self.scrapers:
+                continue
+            enabled = config.get("enabled", False)
+            interval = config.get("interval_minutes", 60)
+            if enabled:
+                log.info("Restoring schedule: %s every %d minutes", source_key, interval)
+                self.set_source_schedule(source_key, enabled, interval)
+            else:
+                # Still create the schedule state but disabled
+                self._init_schedules()
+                self.source_schedules[source_key].enabled = False
+                self.source_schedules[source_key].interval_minutes = interval
 
     def stop_all_schedules(self):
         for sched in self.source_schedules.values():

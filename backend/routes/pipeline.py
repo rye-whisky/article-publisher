@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pipeline run / refetch API routes."""
+"""Pipeline run / refetch / cancel API routes."""
 
 import threading
 
@@ -58,3 +58,23 @@ def refetch(request: Request, req: RefetchRequest, _admin=Depends(require_admin)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "message": "Refetch started"}
+
+
+@router.post("/cancel")
+def cancel_run(request: Request, _admin=Depends(require_admin)):
+    """Cancel a running pipeline. Force-reset if it doesn't respond to cancellation."""
+    svc = request.app.state.pipeline_service
+    if not svc.run_state.running:
+        raise HTTPException(409, "No pipeline is running")
+
+    svc.run_state.cancel()
+    return {"ok": True, "message": "Cancellation requested"}
+
+
+@router.post("/force-reset")
+def force_reset(request: Request, _admin=Depends(require_admin)):
+    """Force-reset a stuck run state (emergency use)."""
+    svc = request.app.state.pipeline_service
+    was_running = svc.run_state.running
+    svc.run_state.finish({"ok": False, "error": "force-reset by admin"})
+    return {"ok": True, "message": f"Run state reset (was_running={was_running})"}

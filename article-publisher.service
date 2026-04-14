@@ -1,0 +1,27 @@
+[Unit]
+Description=Article Publisher Service
+Documentation=https://github.com/chainthink/article-publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=article-publisher
+Group=article-publisher
+WorkingDirectory=/opt/article-publisher
+Environment="PATH=/opt/article-publisher/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/article-publisher/venv/bin/python backend/api.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/article-publisher/data /opt/article-publisher/logs /opt/article-publisher/output
+
+[Install]
+WantedBy=multi-user.target
