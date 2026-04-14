@@ -144,9 +144,13 @@ class AiPipelineService:
         Many CDNs (知乎 pic-out.zhimg.com, etc.) use expiring auth tokens
         or referer-based hotlink protection. Re-hosting ensures images
         remain accessible indefinitely.
+
+        Images that fail to download (expired tokens, 403, etc.) are
+        removed from blocks so the frontend doesn't show broken images.
         """
         # Collect all image URLs to rehost
         urls_to_rehost = []
+        failed_urls = set()  # URLs that can't be downloaded
 
         # Cover image
         cover_src = article.get("cover_src", "")
@@ -170,16 +174,21 @@ class AiPipelineService:
             original_url = entry[-1]
             if original_url in rehosted:
                 new_url = rehosted[original_url]
+            elif original_url in failed_urls:
+                continue  # Already failed, skip
             else:
                 try:
                     new_url = self.cos_uploader.upload_cover_from_url(original_url)
                     if new_url:
                         rehosted[original_url] = new_url
-                        log.info("[AI] Rehosted image: %s -> %s", original_url[:60], new_url[:60])
+                        log.info("[AI] Rehosted: %s -> %s", original_url[:80], new_url[:80])
                     else:
+                        log.warning("[AI] Rehost returned empty for: %s", original_url[:80])
+                        failed_urls.add(original_url)
                         continue
                 except Exception as e:
-                    log.warning("[AI] Failed to rehost %s: %s", original_url[:60], e)
+                    log.warning("[AI] Rehost failed (%s), will remove: %s", str(e)[:40], original_url[:80])
+                    failed_urls.add(original_url)
                     continue
 
             # Apply rehosted URL
@@ -187,6 +196,18 @@ class AiPipelineService:
                 article["cover_src"] = new_url
             elif entry[0] == "block":
                 blocks[entry[1]]["src"] = new_url
+
+        # Remove blocks with failed images (broken image URLs)
+        if failed_urls:
+            before = len(blocks)
+            article["blocks"] = [b for b in blocks if b.get("src") not in failed_urls]
+            removed = before - len(article["blocks"])
+            if removed:
+                log.info("[AI] Removed %d broken image blocks from '%s'", removed, article.get("title", "")[:40])
+
+            # Clear cover if it failed
+            if article.get("cover_src") in failed_urls:
+                article["cover_src"] = ""
 
         return article
 
