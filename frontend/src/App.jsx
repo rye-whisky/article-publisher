@@ -557,7 +557,7 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
             <input type="text" value={coverSrc} onChange={e => setCoverSrc(e.target.value)} placeholder="URL" />
             {coverSrc && (
               <div className="cover-preview">
-                <img src={coverSrc} alt="cover" />
+                <img src={coverSrc} alt="cover" referrerPolicy="no-referrer" />
               </div>
             )}
           </div>
@@ -767,7 +767,7 @@ function ArticlesPage() {
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <div className="article-body">
               {a.blocks?.map((b, i) => {
-                if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} style={{ maxWidth: '100%' }} /></p>
+                if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} referrerPolicy="no-referrer" style={{ maxWidth: '100%' }} /></p>
                 if (b.type === 'h2') return <h3 key={i}>{b.text}</h3>
                 if (b.type === 'h3') return <h4 key={i}>{b.text}</h4>
                 if (b.type === 'h4') return <h5 key={i}>{b.text}</h5>
@@ -849,7 +849,7 @@ function ArticlesPage() {
                 </button>
                 )}
                 {a.cover_image ? (
-                  <img className="card-cover" src={a.cover_image} alt={a.title} />
+                  <img className="card-cover" src={a.cover_image} alt={a.title} referrerPolicy="no-referrer" />
                 ) : (
                   <div className="card-cover-placeholder">
                     {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : a.source_key === 'odaily' ? 'OD' : 'TF'}
@@ -1497,7 +1497,7 @@ function AiArticlesPage() {
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <div className="article-body">
               {a.blocks?.map((b, i) => {
-                if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} style={{ maxWidth: '100%' }} /></p>
+                if (b.type === 'img') return <p key={i}><img src={b.src} alt={b.alt} referrerPolicy="no-referrer" style={{ maxWidth: '100%' }} /></p>
                 if (b.type === 'h2') return <h3 key={i}>{b.text}</h3>
                 if (b.type === 'h3') return <h4 key={i}>{b.text}</h4>
                 if (b.type === 'h4') return <h5 key={i}>{b.text}</h5>
@@ -1581,7 +1581,7 @@ function AiArticlesPage() {
                     onClick={e => { e.stopPropagation(); toggleSelect(a.article_id) }} />
                 )}
                 {a.cover_src ? (
-                  <img className="card-cover" src={a.cover_src} alt={a.title} />
+                  <img className="card-cover" src={a.cover_src} alt={a.title} referrerPolicy="no-referrer" />
                 ) : (
                   <div className="card-cover-placeholder">AI</div>
                 )}
