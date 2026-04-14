@@ -13,6 +13,7 @@ def create_ai_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> 
     from .bestblogs import BestBlogsScraper
     from .claude import ClaudeScraper
     from .kr36 import Kr36Scraper
+    from .qbitai import QbitaiScraper
 
     scrapers = {}
     ai_cfg = cfg.get("ai_sources", {})
@@ -41,6 +42,12 @@ def create_ai_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> 
     if ai_cfg.get("claude", {}).get("enabled", True):
         scrapers["claude"] = ClaudeScraper(
             ai_cfg.get("claude", {}), session, output_dir
+        )
+
+    # 量子位 AI 资讯
+    if ai_cfg.get("qbitai", {}).get("enabled", True):
+        scrapers["qbitai"] = QbitaiScraper(
+            ai_cfg.get("qbitai", {}), session, output_dir
         )
 
     return scrapers
