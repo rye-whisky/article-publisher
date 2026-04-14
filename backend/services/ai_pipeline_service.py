@@ -18,12 +18,13 @@ class AiPipelineService:
     """Service for AI-curated article pipelines."""
 
     def __init__(self, cfg: dict, base_dir: Path, session, scrapers: dict,
-                 database: ArticleDatabase):
+                 database: ArticleDatabase, cos_uploader=None):
         self.cfg = cfg
         self.base_dir = base_dir
         self.session = session
         self.scrapers = scrapers
         self.database = database
+        self.cos_uploader = cos_uploader
         self._lock = threading.Lock()
         self.run_state = RunState()
         self.source_schedules: dict[str, SourceScheduleState] = {}
@@ -47,7 +48,29 @@ class AiPipelineService:
         from ai_pipelines import create_ai_scrapers
         scrapers = create_ai_scrapers(cfg, session, base_dir)
 
-        return cls(cfg, base_dir, session, scrapers, database)
+        # Build COS uploader from chainthink config
+        cos_uploader = None
+        ct_cfg = cfg.get("chainthink", {})
+        if ct_cfg.get("upload_url"):
+            from utils.cos import COSUploader
+            api_headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json; charset=utf-8",
+                "Origin": "https://admin.chainthink.cn",
+                "Referer": "https://admin.chainthink.cn/",
+                "User-Agent": "Mozilla/5.0",
+                "x-token": ct_cfg.get("token", ""),
+                "x-user-id": str(ct_cfg.get("user_id", "")),
+                "X-App-Id": str(ct_cfg.get("app_id", "")),
+            }
+            cos_uploader = COSUploader(
+                upload_url=ct_cfg["upload_url"],
+                api_headers=api_headers,
+                session=session,
+                x_app_id=str(ct_cfg.get("app_id", "")),
+            )
+
+        return cls(cfg, base_dir, session, scrapers, database, cos_uploader)
 
     # -- Ingestion --
 
@@ -70,6 +93,11 @@ class AiPipelineService:
                     if self.run_state.cancelled:
                         break
                     article = scraper.fetch_detail(item)
+
+                    # Re-upload images to COS (avoid expiring CDN tokens / hotlink blocks)
+                    if self.cos_uploader:
+                        article = self._rehost_images(article)
+
                     # Save to file
                     scraper.save(article)
 
@@ -109,6 +137,58 @@ class AiPipelineService:
                 summary[source_key] = {"new": 0, "total": 0, "error": error_msg}
 
         return summary
+
+    def _rehost_images(self, article: dict) -> dict:
+        """Download images from external CDNs and re-upload to our COS.
+
+        Many CDNs (知乎 pic-out.zhimg.com, etc.) use expiring auth tokens
+        or referer-based hotlink protection. Re-hosting ensures images
+        remain accessible indefinitely.
+        """
+        # Collect all image URLs to rehost
+        urls_to_rehost = []
+
+        # Cover image
+        cover_src = article.get("cover_src", "")
+        if cover_src and "cos.chainthink.cn" not in cover_src:
+            urls_to_rehost.append(("cover_src", cover_src))
+
+        # Body images
+        blocks = article.get("blocks", [])
+        for i, block in enumerate(blocks):
+            if block.get("type") == "img" and block.get("src"):
+                src = block["src"]
+                if "cos.chainthink.cn" not in src:
+                    urls_to_rehost.append(("block", i, src))
+
+        if not urls_to_rehost:
+            return article
+
+        # Rehost each image
+        rehosted = {}  # original_url -> new_url
+        for entry in urls_to_rehost:
+            original_url = entry[-1]
+            if original_url in rehosted:
+                new_url = rehosted[original_url]
+            else:
+                try:
+                    new_url = self.cos_uploader.upload_cover_from_url(original_url)
+                    if new_url:
+                        rehosted[original_url] = new_url
+                        log.info("[AI] Rehosted image: %s -> %s", original_url[:60], new_url[:60])
+                    else:
+                        continue
+                except Exception as e:
+                    log.warning("[AI] Failed to rehost %s: %s", original_url[:60], e)
+                    continue
+
+            # Apply rehosted URL
+            if entry[0] == "cover_src":
+                article["cover_src"] = new_url
+            elif entry[0] == "block":
+                blocks[entry[1]]["src"] = new_url
+
+        return article
 
     # -- Status --
 
