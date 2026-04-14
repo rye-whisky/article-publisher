@@ -151,23 +151,21 @@ class ChainCatcherScraper(BaseScraper):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         raw_id = article.get("raw_id", article.get("article_id", ""))
         path = self.output_dir / f"chaincatcher_{raw_id}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "article_id": raw_id,
-                    "title": article.get("title", ""),
-                    "source": article.get("source", ARTICLE_SOURCE_NAME),
-                    "author": article.get("author", ""),
-                    "publish_time": article.get("publish_time", ""),
-                    "original_url": article.get("original_url", ""),
-                    "cover_src": article.get("cover_src", ""),
-                    "blocks": article.get("blocks", []),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        content = json.dumps(
+            {
+                "article_id": raw_id,
+                "title": article.get("title", ""),
+                "source": article.get("source", ARTICLE_SOURCE_NAME),
+                "author": article.get("author", ""),
+                "publish_time": article.get("publish_time", ""),
+                "original_url": article.get("original_url", ""),
+                "cover_src": article.get("cover_src", ""),
+                "blocks": article.get("blocks", []),
+            },
+            ensure_ascii=False,
+            indent=2,
         )
+        self._write_file_with_lock(path, content)
         return path
 
     # -- File parsing --

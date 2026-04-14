@@ -7,7 +7,25 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterator
 
+try:
+    import portalocker
+except ImportError:
+    portalocker = None
+
 log = logging.getLogger("pipeline")
+
+
+def _file_write_with_lock(path: Path, content: str) -> None:
+    """Write file with portalocker lock if available, otherwise atomic write."""
+    if portalocker is not None:
+        # Use portalocker for cross-platform file locking
+        with portalocker.Lock(str(path), timeout=5, mode='w'):
+            path.write_text(content, encoding="utf-8")
+    else:
+        # Fallback: atomic write via temporary file
+        tmp_path = path.with_suffix('.tmp')
+        tmp_path.write_text(content, encoding="utf-8")
+        tmp_path.replace(path)  # Atomic rename
 
 
 class BaseScraper(ABC):
@@ -47,6 +65,30 @@ class BaseScraper(ABC):
     @abstractmethod
     def _article_id_from_path(self, path: Path) -> str | None:
         """Extract article_id from file path. Override in subclass."""
+
+    # -- File writing with lock (protected method for subclasses) --
+
+    def _write_file_with_lock(self, path: Path, content: str) -> None:
+        """Write file with portalocker lock (cross-platform) or atomic fallback.
+
+        Subclasses should use this in their save() method instead of path.write_text().
+
+        Args:
+            path: Target file path
+            content: Content to write (typically JSON string)
+        """
+        try:
+            import portalocker
+            # Use portalocker for cross-platform file locking
+            # LOCK_EX = exclusive lock, timeout = 5 seconds
+            with portalocker.Lock(str(path), timeout=5, mode='w'):
+                path.write_text(content, encoding="utf-8")
+        except ImportError:
+            # Fallback: atomic write via temporary file
+            # This prevents data corruption but doesn't prevent concurrent writes
+            tmp_path = path.with_suffix('.tmp')
+            tmp_path.write_text(content, encoding="utf-8")
+            tmp_path.replace(path)  # Atomic rename
 
     # -- Optimized article loading with iterator --
 

@@ -106,21 +106,19 @@ class TechFlowScraper(BaseScraper):
     def save(self, article: dict) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         path = self.output_dir / f"techflow_{article['article_id']}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "article_id": article["article_id"],
-                    "title": article["title"],
-                    "source": article["source"],
-                    "original_url": article["original_url"],
-                    "cover_src": article.get("cover_src", ""),
-                    "blocks": article["blocks"],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        content = json.dumps(
+            {
+                "article_id": article["article_id"],
+                "title": article["title"],
+                "source": article["source"],
+                "original_url": article["original_url"],
+                "cover_src": article.get("cover_src", ""),
+                "blocks": article["blocks"],
+            },
+            ensure_ascii=False,
+            indent=2,
         )
+        self._write_file_with_lock(path, content)
         return path
 
     # -- File parsing --

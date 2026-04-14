@@ -40,44 +40,38 @@ class OdailyScraper(BaseScraper):
     # -- List parsing --
 
     def parse_list(self) -> list[dict]:
-        """Fetch article list from API."""
+        """Fetch article list from API.
+
+        Only fetches page 1 (latest 20 articles). Older articles
+        should already be in the database from previous runs.
+        """
         items = []
-        page = 1
-        while True:
-            r = self.session.get(
-                f"{API_BASE}/post/page",
-                params={"page": page, "size": 20},
-                headers={
-                    "Origin": "https://www.odaily.news",
-                    "Referer": "https://www.odaily.news/",
-                    "x-locale": "zh-CN",
-                },
-                timeout=30,
-            )
-            r.raise_for_status()
-            body = r.json()
-            data = body.get("data") or {}
-            article_list = data.get("list") or []
+        r = self.session.get(
+            f"{API_BASE}/post/page",
+            params={"page": 1, "size": 20},
+            headers={
+                "Origin": "https://www.odaily.news",
+                "Referer": "https://www.odaily.news/",
+                "x-locale": "zh-CN",
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        body = r.json()
+        data = body.get("data") or {}
+        article_list = data.get("list") or []
 
-            if not article_list:
-                break
+        for art in article_list:
+            aid = str(art.get("id", ""))
+            if not aid:
+                continue
+            items.append({
+                "article_id": aid,
+                "original_url": f"https://www.odaily.news/zh-CN/post/{aid}",
+                "source": ARTICLE_SOURCE_NAME,
+            })
 
-            for art in article_list:
-                aid = str(art.get("id", ""))
-                if not aid:
-                    continue
-                items.append({
-                    "article_id": aid,
-                    "original_url": f"https://www.odaily.news/zh-CN/post/{aid}",
-                    "source": ARTICLE_SOURCE_NAME,
-                })
-
-            # Stop if no more pages
-            if page >= data.get("totalPage", 1):
-                break
-            page += 1
-
-        log.info("Odaily found %d articles", len(items))
+        log.info("Odaily found %d articles (page 1 only)", len(items))
         return items
 
     # -- Detail fetching --
@@ -235,23 +229,21 @@ class OdailyScraper(BaseScraper):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         raw_id = article.get("raw_id", article.get("article_id", ""))
         path = self.output_dir / f"odaily_{raw_id}.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "article_id": raw_id,
-                    "title": article.get("title", ""),
-                    "source": article.get("source", ARTICLE_SOURCE_NAME),
-                    "author": article.get("author", ""),
-                    "publish_time": article.get("publish_time", ""),
-                    "original_url": article.get("original_url", ""),
-                    "cover_src": article.get("cover_src", ""),
-                    "blocks": article.get("blocks", []),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
+        content = json.dumps(
+            {
+                "article_id": raw_id,
+                "title": article.get("title", ""),
+                "source": article.get("source", ARTICLE_SOURCE_NAME),
+                "author": article.get("author", ""),
+                "publish_time": article.get("publish_time", ""),
+                "original_url": article.get("original_url", ""),
+                "cover_src": article.get("cover_src", ""),
+                "blocks": article.get("blocks", []),
+            },
+            ensure_ascii=False,
+            indent=2,
         )
+        self._write_file_with_lock(path, content)
         return path
 
     # -- File parsing --
