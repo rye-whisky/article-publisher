@@ -50,6 +50,7 @@ def refetch(request: Request, req: RefetchRequest, _admin=Depends(require_admin)
                 refetch_blockbeats_urls=req.blockbeats_urls or None,
                 refetch_chaincatcher_urls=req.chaincatcher_urls or None,
                 refetch_odaily_urls=req.odaily_urls or None,
+                refetch_bestblogs_urls=req.bestblogs_urls or None,
                 republish_refetched=req.republish,
             )
             svc.run_state.finish(result)

@@ -152,6 +152,9 @@ class AiPipelineService:
         urls_to_rehost = []
         failed_urls = set()  # URLs that can't be downloaded
 
+        # Use the article's original URL as Referer for hotlink-protected CDNs
+        article_referer = article.get("original_url", "")
+
         # Cover image
         cover_src = article.get("cover_src", "")
         if cover_src and "cos.chainthink.cn" not in cover_src:
@@ -177,8 +180,9 @@ class AiPipelineService:
             elif original_url in failed_urls:
                 continue  # Already failed, skip
             else:
+                referer = self._build_referer(original_url, article_referer)
                 try:
-                    new_url = self.cos_uploader.upload_cover_from_url(original_url)
+                    new_url = self.cos_uploader.upload_cover_from_url(original_url, referer=referer)
                     if new_url:
                         rehosted[original_url] = new_url
                         log.info("[AI] Rehosted: %s -> %s", original_url[:80], new_url[:80])
@@ -210,6 +214,20 @@ class AiPipelineService:
                 article["cover_src"] = ""
 
         return article
+
+    @staticmethod
+    def _build_referer(image_url: str, article_url: str) -> str:
+        """Build a Referer header for downloading images.
+
+        Some CDNs require a specific Referer to allow access.
+        - pic-out.zhimg.com / zhimg.com: needs zhihu.com Referer
+        - Others: use the article's original URL as Referer
+        """
+        if "zhimg.com" in image_url:
+            return "https://www.zhihu.com/"
+        if article_url:
+            return article_url
+        return ""
 
     # -- Status --
 

@@ -14,6 +14,7 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     from .blockbeats import BlockBeatsScraper
     from .chaincatcher import ChainCatcherScraper
     from .odaily import OdailyScraper
+    from .bestblogs import BestBlogsScraper
 
     scrapers = {}
     sources_cfg = cfg.get("sources", {})
@@ -43,5 +44,10 @@ def create_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dic
     if "odaily" in sources_cfg:
         odaily_dir = base_dir / paths_cfg.get("odaily_output", "output/odaily_articles")
         scrapers["odaily"] = OdailyScraper(sources_cfg["odaily"], session, odaily_dir)
+
+    # BestBlogs
+    if "bestblogs" in sources_cfg:
+        bb_dir = base_dir / paths_cfg.get("bestblogs_output", "output/bestblogs_articles")
+        scrapers["bestblogs"] = BestBlogsScraper(sources_cfg["bestblogs"], session, bb_dir)
 
     return scrapers

@@ -144,7 +144,7 @@ function DashboardPage() {
   const [schedules, setSchedules] = useState({})
   const [scheduleIntervals, setScheduleIntervals] = useState({})
 
-  const SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily']
+  const SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily', 'bestblogs']
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -276,6 +276,9 @@ function DashboardPage() {
           </button>
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('odaily')}>
             <Icon name="play" /> {t('odailyOnly')}
+          </button>
+          <button className="btn btn-outline" disabled={running} onClick={() => handleRun('bestblogs')}>
+            <Icon name="play" /> {t('bestBlogsOnly')}
           </button>
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('all', true)}>
             <Icon name="refresh" /> {t('dryRun')}
@@ -541,6 +544,7 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
           <button className={sourceKey === 'blockbeats' ? 'active' : ''} onClick={() => setSourceKey('blockbeats')}>BlockBeats</button>
           <button className={sourceKey === 'chaincatcher' ? 'active' : ''} onClick={() => setSourceKey('chaincatcher')}>ChainCatcher</button>
           <button className={sourceKey === 'odaily' ? 'active' : ''} onClick={() => setSourceKey('odaily')}>Odaily</button>
+          <button className={sourceKey === 'bestblogs' ? 'active' : ''} onClick={() => setSourceKey('bestblogs')}>BestBlogs</button>
         </div>
       )}
 
@@ -823,7 +827,7 @@ function ArticlesPage() {
             <Icon name="plus" size={14} /> {t('createArticle')}
           </button>
           )}
-          {['all', 'stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily'].map(s => (
+          {['all', 'stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily', 'bestblogs'].map(s => (
             <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(s)}>
               {s.toUpperCase()}
             </button>
@@ -852,7 +856,7 @@ function ArticlesPage() {
                   <img className="card-cover" src={a.cover_image} alt={a.title} referrerPolicy="no-referrer" />
                 ) : (
                   <div className="card-cover-placeholder">
-                    {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : a.source_key === 'odaily' ? 'OD' : 'TF'}
+                    {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : a.source_key === 'odaily' ? 'OD' : a.source_key === 'bestblogs' ? 'BB*' : 'TF'}
                   </div>
                 )}
                 <div className="card-body">
@@ -861,7 +865,7 @@ function ArticlesPage() {
                 </div>
                 <div className="card-meta">
                   <span>
-                    <span className={`badge ${a.source_key === 'stcn' ? 'badge-info' : a.source_key === 'blockbeats' ? 'badge-warning' : a.source_key === 'chaincatcher' ? 'badge-danger' : a.source_key === 'odaily' ? 'badge-primary' : 'badge-warning'}`} style={{ marginRight: 6 }}>{a.source_key}</span>
+                    <span className={`badge ${a.source_key === 'stcn' ? 'badge-info' : a.source_key === 'blockbeats' ? 'badge-warning' : a.source_key === 'chaincatcher' ? 'badge-danger' : a.source_key === 'odaily' ? 'badge-primary' : a.source_key === 'bestblogs' ? 'badge-success' : 'badge-warning'}`} style={{ marginRight: 6 }}>{a.source_key}</span>
                     {a.published ? <span className="badge badge-success">{t('published')}</span> : <span className="badge badge-default">{t('draft')}</span>}
                   </span>
                   <span>{a.publish_time || ''}</span>

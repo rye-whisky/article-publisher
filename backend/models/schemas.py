@@ -20,12 +20,13 @@ class RunRequest(BaseModel):
 
 class RefetchRequest(BaseModel):
     """Request to refetch specific articles."""
-    source: str = Field(default="stcn", pattern="^(stcn|techflow|blockbeats|chaincatcher|odaily|all)$")
+    source: str = Field(default="stcn", pattern="^(stcn|techflow|blockbeats|chaincatcher|odaily|bestblogs|all)$")
     stcn_urls: list[str] = Field(default_factory=list)
     techflow_ids: list[str] = Field(default_factory=list)
     blockbeats_urls: list[str] = Field(default_factory=list)
     chaincatcher_urls: list[str] = Field(default_factory=list)
     odaily_urls: list[str] = Field(default_factory=list)
+    bestblogs_urls: list[str] = Field(default_factory=list)
     republish: bool = Field(default=False, description="Also republish the refetched articles")
 
 

@@ -163,10 +163,13 @@ class COSUploader:
 
     # -- High-level: upload image from URL --
 
-    def upload_cover_from_url(self, image_url):
+    def upload_cover_from_url(self, image_url, referer=""):
         if not image_url:
             return ""
-        img = self.session.get(image_url, timeout=60)
+        headers = {}
+        if referer:
+            headers["Referer"] = referer
+        img = self.session.get(image_url, timeout=60, headers=headers)
         img.raise_for_status()
         ext = "jpg"
         ctype = img.headers.get("content-type", "").lower()
