@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
     ai_svc.restore_schedules()
     if svc.push_scheduler:
         svc.push_scheduler.start()
+    if svc.auto_publish_scheduler:
+        svc.auto_publish_scheduler.start()
 
     # Set default schedules for sources without saved config (10-20 min)
     # Blockchain sources: 15 min default
