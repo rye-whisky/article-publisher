@@ -1080,24 +1080,41 @@ class ArticleDatabase:
         self,
         min_score: int = 75,
         limit: int = 1,
+        source_keys: list[str] | None = None,
     ) -> list[dict]:
         """Get unpublished articles ready for auto publish + broadcast.
 
         Only selects articles that haven't been published or broadcast yet.
+        If source_keys is provided, only select articles from those sources.
+        Otherwise, reads from push_auto_sources setting (defaults to techflow,blockbeats).
         Excludes sources in AUTO_PUBLISH_EXCLUDED_SOURCES.
         """
-        excluded = self.AUTO_PUBLISH_EXCLUDED_SOURCES
-        placeholders = ",".join("?" * len(excluded))
+        # Determine allowed sources
+        if source_keys is None:
+            # Read from settings
+            raw = (self.get_setting("push_auto_sources") or "techflow,blockbeats").strip()
+            if raw.startswith("["):
+                try:
+                    source_keys = [str(item).strip() for item in __import__("json").loads(raw) if str(item).strip()]
+                except __import__("json").JSONDecodeError:
+                    source_keys = [item.strip() for item in raw.split(",") if item.strip()]
+            else:
+                source_keys = [item.strip() for item in raw.split(",") if item.strip()]
+
+        if not source_keys:
+            return []
+
         conn = self._get_conn()
+        placeholders = ",".join("?" * len(source_keys))
         rows = conn.execute(
             f"""
             SELECT *
             FROM articles
-            WHERE COALESCE(publish_stage, 'local') = 'local'
+            WHERE COALESCE(publish_stage, 'local') IN ('local', 'draft')
               AND filter_status = 'passed'
               AND score IS NOT NULL
               AND score >= ?
-              AND source_key NOT IN ({placeholders})
+              AND source_key IN ({placeholders})
               AND NOT EXISTS (
                   SELECT 1 FROM push_history ph
                   WHERE ph.article_id = articles.article_id AND ph.strategy = 'auto'
@@ -1109,7 +1126,7 @@ class ArticleDatabase:
             ORDER BY score DESC, created_at DESC
             LIMIT ?
             """,
-            (min_score, *excluded, limit),
+            (min_score, *source_keys, limit),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 

@@ -77,16 +77,25 @@ class ScorerService:
 
         Returns (review_status, auto_publish_enabled) where auto_publish_enabled
         is encoded as: 0=off, 1=热文(75-84), 2=爆文(85+).
+
+        Auto-publish is ONLY enabled for techflow and blockbeats sources with score >= 75.
         """
+        # Get allowed auto-publish sources
+        auto_sources = self._get_auto_sources()
+        is_auto_source = source_key in auto_sources
+
         if score < 60:
             return "low_priority", False
         if score < 70:
             return "manual_review", False
         if score < 75:
             return "auto_candidate", False  # 存草稿，不自动发
+        # Auto-publish only for techflow and blockbeats (75+ score)
+        if not is_auto_source:
+            return "auto_candidate", False  # 其他信源不自动发布，只存草稿
         if score < 85:
-            return "auto_candidate", True   # 热文候选
-        return "auto_candidate", True       # 爆文候选 (auto_publish=1, score distinguishes)
+            return "auto_candidate", True   # 热文候选（仅 techflow/blockbeats）
+        return "auto_candidate", True       # 爆文候选（仅 techflow/blockbeats）
 
     def _get_auto_sources(self) -> set[str]:
         raw = (self.database.get_setting("push_auto_sources") or "techflow,blockbeats").strip()

@@ -120,6 +120,197 @@ def semantic_dedup(title: str, recent_titles: list[str], db: ArticleDatabase) ->
     return False
 
 
+# ───────────────────────── Author info extraction ─────────────────────────
+
+AUTHOR_INFO_SYSTEM_PROMPT = """你是一个文章内容分析助手。我会给你文章头部的内容片段，你需要：
+
+1. 识别属于"作者/编辑/译者信息"的内容行
+2. 这些信息可能包含：原文作者、作者、撰文、编译者、译者、编辑等关键词
+3. 提取这些信息行的完整文本
+4. 返回 JSON 格式结果
+
+【输出格式】
+只返回纯 JSON，不要有任何其他文字：
+{
+  "to_remove": ["要移除的行1", "要移除的行2"],
+  "author_info": ["整理后的作者信息1", "整理后的作者信息2"]
+}
+
+【规则】
+- 如果没有找到作者/编辑信息，返回 {"to_remove": [], "author_info": []}
+- author_info 中保留原始信息，但要去除 markdown 格式（如 _ * 等）
+- 只处理明确属于作者信息的内容，不要误删正文
+"""
+
+AUTHOR_INFO_FALLBACK_PATTERNS = [
+    r'^_?原文作者[：:]\s*(.+?)_?$',
+    r'^_?原文编译[：:]\s*(.+?)_?$',
+    r'^_?作者[：:]\s*(.+?)_?$',
+    r'^_?撰文[：:]\s*(.+?)_?$',
+    r'^_?编译[：:]\s*(.+?)_?$',
+    r'^_?译者[：:]\s*(.+?)_?$',
+    r'^_?编辑[：:]\s*(.+?)_?$',
+]
+
+
+def extract_author_info(article: dict, db: ArticleDatabase,
+                        use_llm: bool = True) -> dict:
+    """识别并提取文章头部的作者/编辑信息，移到文章末尾。
+
+    Args:
+        article: 文章 dict，包含 blocks
+        db: 数据库实例
+        use_llm: 是否使用 LLM（False 则使用正则表达式回退方案）
+
+    Returns:
+        更新后的 article dict
+    """
+    blocks = article.get("blocks", [])
+    if not blocks:
+        return article
+
+    # 检查文章头部（前 15 个非图片 block）
+    header_blocks = []
+    header_indices = []
+    for i, block in enumerate(blocks):
+        if block.get("type") == "img":
+            continue
+        text = block.get("text", "").strip()
+        if text:
+            header_blocks.append(text)
+            header_indices.append(i)
+        if len(header_blocks) >= 15:
+            break
+
+    if not header_blocks:
+        return article
+
+    to_remove = set()
+    author_info = []
+
+    if use_llm and db is not None:
+        # 使用 LLM 识别
+        try:
+            svc = _get_llm_service(db)
+            header_text = "\n".join(f"{i+1}. {t}" for i, t in enumerate(header_blocks))
+            response = svc.chat(
+                "abstract",  # 使用 abstract 任务的模型配置
+                AUTHOR_INFO_SYSTEM_PROMPT,
+                header_text,
+                max_tokens=512,
+                temperature=0.1
+            )
+
+            if response:
+                # 提取 JSON
+                match = re.search(r'\{[\s\S]*\}', response)
+                if match:
+                    data = json.loads(match.group(0))
+                    to_remove = set(data.get("to_remove", []))
+                    author_info = data.get("author_info", [])
+
+                    # 映射回原始索引
+                    indices_to_remove = set()
+                    for remove_text in to_remove:
+                        # 去除可能的编号前缀
+                        clean_text = re.sub(r'^\d+\.\s*', '', remove_text).strip()
+                        for idx, original_text in enumerate(header_blocks):
+                            if clean_text in original_text or original_text in clean_text:
+                                indices_to_remove.add(header_indices[idx])
+                                break
+                    to_remove = indices_to_remove
+
+                    log.info("[LLM] 作者信息识别成功: 移除 %d 行, 提取 %d 条信息",
+                             len(to_remove), len(author_info))
+        except Exception as e:
+            log.warning("[LLM] 作者信息识别失败，使用回退方案: %s", e)
+
+    # 如果 LLM 失败或未启用，使用正则表达式回退
+    if not to_remove and not author_info:
+        for i, idx in enumerate(header_indices):
+            text = header_blocks[i]
+            for pattern in AUTHOR_INFO_FALLBACK_PATTERNS:
+                match = re.match(pattern, text, re.IGNORECASE)
+                if match:
+                    to_remove.add(idx)
+                    # 提取信息
+                    info_text = re.sub(r'^[_\*]+|[_\*]+$', '', match.group(0)).strip()
+                    # 标准化冒号
+                    info_text = re.sub(r'[：:]', '：', info_text)
+                    author_info.append(info_text)
+                    break
+
+    if to_remove or author_info:
+        # 构建新的 blocks
+        new_blocks = []
+        for i, block in enumerate(blocks):
+            if i in to_remove:
+                continue
+            new_blocks.append(block)
+
+        # 在文章末尾添加作者信息
+        if author_info:
+            new_blocks.append({"type": "p", "text": ""})  # 空行分隔
+            for info in author_info:
+                new_blocks.append({"type": "p", "text": info})
+
+        result = {k: v for k, v in article.items()}
+        result["blocks"] = new_blocks
+        return result
+
+    return article
+
+
+# ───────────────────────── Article optimization workflow ─────────────────────────
+
+def optimize_article_for_publishing(article: dict, db: ArticleDatabase,
+                                    enable_author_info: bool = True) -> dict:
+    """对文章进行发布前的 LLM 优化。
+
+    在评分 >= 70 时调用，优化包括：
+    1. 提取作者/编辑信息到文章末尾
+    2. 替换"编者按"为"导语"
+
+    Args:
+        article: 文章 dict，包含 blocks
+        db: 数据库实例
+        enable_author_info: 是否启用作者信息提取
+
+    Returns:
+        优化后的 article dict
+    """
+    if not article.get("blocks"):
+        return article
+
+    log.info("[LLM] 开始优化文章: aid=%s, 作者信息提取=%s",
+             article.get("article_id", ""), enable_author_info)
+
+    source_key = article.get("source_key", "")
+
+    # 1. 替换"编者按"为"导语"（适用于律动等信源）
+    blocks = article.get("blocks", [])
+    for block in blocks:
+        if block.get("type") in ("h2", "h3", "h4", "p"):
+            text = block.get("text", "")
+            # 匹配"编者按"（可能有各种标点符号）
+            if re.search(r'编者按[：:：]?', text):
+                new_text = re.sub(r'编者按([：:：]?)', r'导语\1', text)
+                if new_text != text:
+                    block["text"] = new_text
+                    log.info("[LLM] 替换'编者按'为'导语': aid=%s", article.get("article_id", ""))
+
+    # 2. 提取作者信息
+    if enable_author_info:
+        try:
+            article = extract_author_info(article, db, use_llm=True)
+        except Exception as e:
+            log.warning("[LLM] 作者信息提取失败: aid=%s, error=%s",
+                        article.get("article_id", ""), e)
+
+    log.info("[LLM] 文章优化完成: aid=%s", article.get("article_id", ""))
+    return article
+
+
 # ───────────────────────── Article editing ─────────────────────────
 
 EDIT_SYSTEM_PROMPT = """你是专业的区块链与加密货币领域内容编辑。对用户提供的文章正文进行编辑润色。

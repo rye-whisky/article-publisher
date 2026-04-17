@@ -40,10 +40,11 @@ class BaseScraper(ABC):
 
     source_key: str = ""
 
-    def __init__(self, cfg: dict, session, output_dir: Path):
+    def __init__(self, cfg: dict, session, output_dir: Path, db=None):
         self.cfg = cfg
         self.session = session
         self.output_dir = output_dir
+        self.db = db  # Optional database instance for LLM features
         self._article_cache: dict[Path, dict] = {}  # File cache
 
     @abstractmethod

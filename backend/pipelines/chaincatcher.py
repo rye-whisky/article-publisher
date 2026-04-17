@@ -80,6 +80,9 @@ class ChainCatcherScraper(BaseScraper):
             title_el = soup.find("h1")
             title = title_el.get_text(strip=True) if title_el else ""
 
+        # Remove " - ChainCatcher" suffix from title
+        title = re.sub(r'\s*-\s*ChainCatcher$', '', title, flags=re.IGNORECASE)
+
         # Cover (og:image)
         og = soup.find("meta", property="og:image")
         cover_src = og["content"] if og else ""

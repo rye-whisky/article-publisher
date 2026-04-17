@@ -91,12 +91,16 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
     batch_size = int(request.query_params.get("batch_size", 50))
     batch_size = max(1, min(batch_size, 100))  # Limit to 100 per request
 
+    # 获取 LLM 优化设置
+    enable_llm_optimization = svc.database.get_setting("llm_optimization_enabled") == "true"
+    enable_author_info = svc.database.get_setting("llm_author_info_enabled") == "true"
+
     unscored = svc.database.list_unscored_articles(since_date=since_date, limit=500)
     if not unscored:
         return {"ok": True, "count": 0, "processed": 0, "remaining": 0, "message": f"没有未评分的文章 (自 {since_date})"}
 
     # Process in batches
-    results = {"processed": 0, "drafts_saved": 0, "failed": 0, "remaining": 0, "since_date": since_date}
+    results = {"processed": 0, "drafts_saved": 0, "optimized": 0, "failed": 0, "remaining": 0, "since_date": since_date}
     batch_end = min(batch_size, len(unscored))
     for i in range(batch_end):
         article = unscored[i]
@@ -112,9 +116,22 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
                 score_status="done",
             )
 
-            # Auto-save CMS draft for 70-74 scored articles
+            # Auto-save CMS draft for 70+ scored articles
             score = score_result["score"]
-            if score is not None and 70 <= score < 75:
+            if score is not None and score >= 70:
+                # LLM 优化文章（如果启用）
+                if enable_llm_optimization:
+                    try:
+                        from services.llm import optimize_article_for_publishing
+                        article = optimize_article_for_publishing(
+                            article,
+                            svc.database,
+                            enable_author_info=enable_author_info
+                        )
+                        results["optimized"] += 1
+                    except Exception as exc:
+                        log.warning("LLM optimization failed for %s: %s", article["article_id"], exc)
+
                 try:
                     svc.save_article_draft(article, strategy="auto_score")
                     results["drafts_saved"] += 1
@@ -130,9 +147,9 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
     results["remaining"] = remaining
     results["total"] = len(unscored)
 
-    log.info("Rescored %d/%d articles (since %s), %d drafts saved, %d failed, %d remaining",
+    log.info("Rescored %d/%d articles (since %s), %d drafts saved, %d optimized, %d failed, %d remaining",
              results["processed"], results["total"], since_date, results["drafts_saved"],
-             results["failed"], remaining)
+             results["optimized"], results["failed"], remaining)
 
     if remaining > 0:
         return {

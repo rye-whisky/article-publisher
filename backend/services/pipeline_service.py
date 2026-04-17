@@ -238,8 +238,16 @@ class PipelineService:
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         })
 
+        # Initialize database if configured (needed for scrapers with LLM features)
+        database = None
+        db_path = cfg.get("database", {}).get("sqlite_path")
+        if db_path:
+            from services.database import ArticleDatabase
+            database = ArticleDatabase(base_dir / db_path)
+            log.info("Database initialized: %s", base_dir / db_path)
+
         # Build components
-        scrapers = create_scrapers(cfg, session, base_dir)
+        scrapers = create_scrapers(cfg, session, base_dir, db=database)
 
         api_headers = {
             "Accept": "application/json, text/plain, */*",
@@ -268,14 +276,6 @@ class PipelineService:
 
         article_store = ArticleStore(scrapers)
         state_file = base_dir / cfg["paths"]["state_file"]
-
-        # Initialize database if configured
-        database = None
-        db_path = cfg.get("database", {}).get("sqlite_path")
-        if db_path:
-            from services.database import ArticleDatabase
-            database = ArticleDatabase(base_dir / db_path)
-            log.info("Database initialized: %s", base_dir / db_path)
 
         return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file, database)
 
@@ -345,9 +345,9 @@ class PipelineService:
             score_status="done",
         )
 
-        # Auto-save CMS draft for 70-74 scored articles
+        # Auto-save CMS draft for 70+ scored articles
         score = score_result["score"]
-        if score is not None and 70 <= score < 75:
+        if score is not None and score >= 70:
             try:
                 self.save_article_draft(article, strategy="auto_score")
                 log.info("Auto-saved draft for %s (score=%d)", article["article_id"], score)

@@ -132,6 +132,8 @@ const buildWorkflowSettingsForm = (settingsData = {}) => ({
   broadcast_enabled: (settingsData.broadcast_enabled ?? '0') === '1',
   broadcast_grace_minutes: settingsData.broadcast_grace_minutes || '15',
   broadcast_check_interval_minutes: settingsData.broadcast_check_interval_minutes || '15',
+  llm_optimization_enabled: (settingsData.llm_optimization_enabled ?? '0') === '1',
+  llm_author_info_enabled: (settingsData.llm_author_info_enabled ?? '0') === '1',
 })
 
 const workflowSettingsToPayload = (form) => ({
@@ -145,6 +147,8 @@ const workflowSettingsToPayload = (form) => ({
   broadcast_enabled: form.broadcast_enabled ? '1' : '0',
   broadcast_grace_minutes: String(form.broadcast_grace_minutes || '15'),
   broadcast_check_interval_minutes: String(form.broadcast_check_interval_minutes || '15'),
+  llm_optimization_enabled: form.llm_optimization_enabled ? '1' : '0',
+  llm_author_info_enabled: form.llm_author_info_enabled ? '1' : '0',
 })
 
 const parseKeywordLibraryInput = (value) => {
@@ -1624,7 +1628,8 @@ function PromptPage() {
 
   const handleRescoreUnscored = async () => {
     const confirmMsg = '批量重新评分 4月17日及之后的未评分文章？\n' +
-      '- 70-74 分的文章会自动保存为 CMS 草稿\n' +
+      '- 70+ 分的文章会自动保存为 CMS 草稿\n' +
+      '- 如果启用 LLM 优化，会在保存前进行优化\n' +
       '- 75+ 分的文章将进入自动发布队列\n' +
       '处理可能需要几分钟，请勿关闭页面。'
     if (!confirm(confirmMsg)) return
@@ -1632,7 +1637,12 @@ function PromptPage() {
     setRescoring(true)
     try {
       const result = await api.rescoreUnscored('2026-04-17')
-      alert(`处理完成！\n处理: ${result.processed} 篇\n草稿: ${result.drafts_saved} 篇\n失败: ${result.failed} 篇`)
+      let msg = `处理完成！\n处理: ${result.processed} 篇\n草稿: ${result.drafts_saved} 篇`
+      if (result.optimized > 0) {
+        msg += `\nLLM优化: ${result.optimized} 篇`
+      }
+      msg += `\n失败: ${result.failed} 篇`
+      alert(msg)
       refreshWorkflow()
     } catch (e) {
       alert(`处理失败: ${e.message}`)
@@ -1720,7 +1730,7 @@ function PromptPage() {
             <h2>数据管理</h2>
           </div>
           <p style={{ fontSize: 14, color: 'var(--text)', marginTop: 0, marginBottom: 12 }}>
-            重新评分 4月17日及之后未评分的文章，70-74分自动保存草稿，75+分进入自动发布队列。
+            重新评分 4月17日及之后未评分的文章，70+分自动保存草稿（如启用 LLM 优化会先优化），75+分进入自动发布队列（既保存草稿又自动发布）。
           </p>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <button
@@ -1913,6 +1923,41 @@ function PromptPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">
+          <h2>LLM 发布优化</h2>
+        </div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 16 }}>
+          对评分 ≥70 的文章进行 LLM 优化后再保存草稿。优化包括提取作者/编辑信息到文章末尾等。
+        </p>
+        <div className="workflow-grid">
+          <div className="settings-group">
+            <label>启用 LLM 优化</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.llm_optimization_enabled || false}
+                onChange={e => setSettingsForm(prev => ({ ...prev, llm_optimization_enabled: e.target.checked }))}
+                disabled={isGuest}
+              />
+              <span>{(settingsForm.llm_optimization_enabled || false) ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>作者信息提取</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.llm_author_info_enabled || false}
+                onChange={e => setSettingsForm(prev => ({ ...prev, llm_author_info_enabled: e.target.checked }))}
+                disabled={isGuest || !(settingsForm.llm_optimization_enabled || false)}
+              />
+              <span>{(settingsForm.llm_author_info_enabled || false) ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
