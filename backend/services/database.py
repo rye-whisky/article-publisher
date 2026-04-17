@@ -976,6 +976,34 @@ class ArticleDatabase:
         ).fetchone()
         return row[0] if row else 0
 
+    def count_pushes_by_category_and_sources(self, window_start: datetime, strategy: str = "auto",
+                                             category: str = "ai",
+                                             source_keys: list[str] | None = None) -> int:
+        """统计指定时间窗口内特定类别和信源的文章发布数量。
+
+        Args:
+            window_start: 窗口开始时间
+            strategy: 发布策略
+            category: 文章类别（ai/blockchain/mixed/other）
+            source_keys: 信源列表
+        """
+        if not source_keys:
+            return 0
+        conn = self._get_conn()
+        source_key_list = list(source_keys)
+        placeholders = ", ".join("?" for _ in source_key_list)
+        row = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM push_history ph
+            JOIN articles a ON ph.article_id = a.article_id
+            WHERE ph.window_start = ? AND ph.strategy = ? AND ph.cms_id IS NOT NULL AND ph.cms_id != ''
+              AND a.article_category = ?
+              AND ph.source_key IN ({placeholders})
+            """,
+            [window_start.isoformat(), strategy, category] + source_key_list,
+        ).fetchone()
+        return row[0] if row else 0
+
     def get_auto_publish_candidates_by_category(
         self,
         source_keys: list[str],

@@ -1836,6 +1836,9 @@ function PromptPage() {
               disabled={isGuest}
               onChange={e => setSettingsForm(prev => ({ ...prev, ai_daily_limit: e.target.value }))}
             />
+            <small style={{ color: 'var(--text-tertiary)', fontSize: 12, display: 'block', marginTop: 4 }}>
+              仅对深潮和律动生效。当日 AI 文章 < 上限时，优先发布区块链文章。
+            </small>
           </div>
         </div>
         <div className="settings-group">

@@ -59,35 +59,51 @@ class PushScheduler:
         if pushed_count >= max_per_window:
             return {"ok": True, "reason": "window_full", "window_start": window_start.isoformat()}
 
-        # 检查当日 AI 文章数量规则（根据文章类别）
+        # 检查当日 AI 文章数量规则（仅限 techflow 和 blockbeats）
         # 获取今日零点
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # 统计今日已发布的 AI 文章数量（根据文章类别）
-        ai_pushed_today = self.database.count_pushes_by_category(
-            today_start,
-            strategy="auto",
-            category="ai"
-        )
+        # 只对 techflow 和 blockbeats 应用 AI 文章数量限制
+        ai_controlled_sources = {"techflow", "blockbeats"}
+        controlled_sources_in_list = [s for s in source_keys if s in ai_controlled_sources]
 
         # AI 文章数量限制（默认 2 篇）
         ai_daily_limit = self._get_int_setting("ai_daily_limit", 2)
 
-        # 如果今日 AI 文章数量小于限制，优先发布区块链文章
-        if ai_pushed_today < ai_daily_limit:
-            log.info("PushScheduler: 今日 AI 文章 %d 篇 < %d 篇限制，优先发布区块链/非AI文章",
-                     ai_pushed_today, ai_daily_limit)
-            # 优先获取非 AI 类别的候选文章（blockchain、mixed、other）
-            candidates = self.database.get_auto_publish_candidates_by_category(
-                source_keys=source_keys,
-                threshold=threshold,
-                window_start=window_start,
-                window_end=window_end,
-                exclude_categories=["ai"],
-                limit=5,
+        # 如果有受控的信源在自动发布列表中，检查 AI 文章数量
+        if controlled_sources_in_list:
+            # 统计今日从 techflow 和 blockbeats 发布的 AI 文章数量
+            ai_pushed_today = self.database.count_pushes_by_category_and_sources(
+                today_start,
+                strategy="auto",
+                category="ai",
+                source_keys=controlled_sources_in_list
             )
-            # 如果没有非 AI 文章候选，再尝试所有文章
-            if not candidates:
+
+            # 如果今日 AI 文章数量小于限制，优先发布区块链文章
+            if ai_pushed_today < ai_daily_limit:
+                log.info("PushScheduler: 今日 techflow/blockbeats 的 AI 文章 %d 篇 < %d 篇限制，优先发布区块链文章",
+                         ai_pushed_today, ai_daily_limit)
+                # 优先从受控信源获取非 AI 类别的候选文章
+                candidates = self.database.get_auto_publish_candidates_by_category(
+                    source_keys=controlled_sources_in_list,
+                    threshold=threshold,
+                    window_start=window_start,
+                    window_end=window_end,
+                    exclude_categories=["ai"],
+                    limit=5,
+                )
+                # 如果受控信源没有区块链文章候选，再尝试所有文章
+                if not candidates:
+                    candidates = self.database.get_auto_publish_candidates(
+                        source_keys=source_keys,
+                        threshold=threshold,
+                        window_start=window_start,
+                        window_end=window_end,
+                        limit=5,
+                    )
+            else:
+                # 已达到 AI 文章限制，正常发布（包括 AI 文章）
                 candidates = self.database.get_auto_publish_candidates(
                     source_keys=source_keys,
                     threshold=threshold,
@@ -96,6 +112,7 @@ class PushScheduler:
                     limit=5,
                 )
         else:
+            # 没有受控信源，正常发布
             candidates = self.database.get_auto_publish_candidates(
                 source_keys=source_keys,
                 threshold=threshold,
