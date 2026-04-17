@@ -74,25 +74,32 @@ def run_broadcast_check(request: Request, _admin=Depends(require_admin)):
 
 @router.post("/workflow/rescore-unscored")
 def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
-    """Rescore all articles that don't have a score yet.
+    """Rescore articles that don't have a score yet. Processes in batches to avoid timeout.
 
     Query params:
-        since_date: ISO date string (e.g., "2026-04-17"). Only articles created ON or AFTER this date.
-                  Default: "2026-04-17" (fix date for LLM config issue).
+        since_date: ISO date string (e.g., "2026-04-16"). Only articles created ON or AFTER this date.
+                  Default: "2026-04-16" (LLM fix date).
+        batch_size: Number of articles to process per request. Default 50.
+
+    Returns progress info including remaining count.
     """
     svc = request.app.state.pipeline_service
     if not svc.database or not svc.scorer:
         raise HTTPException(501, "Database or scorer not configured")
 
-    # Default to 2026-04-17 (LLM fix date) if not specified
-    since_date = request.query_params.get("since_date", "2026-04-17")
+    since_date = request.query_params.get("since_date", "2026-04-16")
+    batch_size = int(request.query_params.get("batch_size", 50))
+    batch_size = max(1, min(batch_size, 100))  # Limit to 100 per request
 
     unscored = svc.database.list_unscored_articles(since_date=since_date, limit=500)
     if not unscored:
-        return {"ok": True, "count": 0, "message": f"没有未评分的文章 (自 {since_date})"}
+        return {"ok": True, "count": 0, "processed": 0, "remaining": 0, "message": f"没有未评分的文章 (自 {since_date})"}
 
-    results = {"processed": 0, "drafts_saved": 0, "failed": 0, "since_date": since_date}
-    for article in unscored:
+    # Process in batches
+    results = {"processed": 0, "drafts_saved": 0, "failed": 0, "remaining": 0, "since_date": since_date}
+    batch_end = min(batch_size, len(unscored))
+    for i in range(batch_end):
+        article = unscored[i]
         try:
             score_result = svc.scorer.score_article(article)
             svc.database.update_scoring(
@@ -119,6 +126,18 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
             log.error("Rescore failed for %s: %s", article["article_id"], exc)
             results["failed"] += 1
 
-    log.info("Rescored %d articles (since %s), %d drafts saved, %d failed",
-             results["processed"], since_date, results["drafts_saved"], results["failed"])
+    remaining = max(0, len(unscored) - batch_size)
+    results["remaining"] = remaining
+    results["total"] = len(unscored)
+
+    log.info("Rescored %d/%d articles (since %s), %d drafts saved, %d failed, %d remaining",
+             results["processed"], results["total"], since_date, results["drafts_saved"],
+             results["failed"], remaining)
+
+    if remaining > 0:
+        return {
+            "ok": True,
+            **results,
+            "message": f"已处理 {results['processed']}/{results['total']} 篇，剩余 {remaining} 篇。请再次点击按钮继续处理。"
+        }
     return {"ok": True, **results}
