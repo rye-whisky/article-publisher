@@ -115,6 +115,7 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
                 review_status=score_result["review_status"],
                 auto_publish_enabled=score_result["auto_publish_enabled"],
                 score_status="done",
+                article_category=score_result.get("article_category"),
             )
 
             # Auto-save CMS draft for 70+ scored articles

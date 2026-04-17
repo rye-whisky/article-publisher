@@ -193,6 +193,7 @@ class ArticleDatabase:
             "ALTER TABLE articles ADD COLUMN scored_at TEXT",
             "ALTER TABLE articles ADD COLUMN broadcasted_at TEXT",
             "ALTER TABLE articles ADD COLUMN broadcast_strategy TEXT",
+            "ALTER TABLE articles ADD COLUMN article_category TEXT DEFAULT 'other'",
         ]:
             try:
                 conn.execute(col_sql)
@@ -207,6 +208,7 @@ class ArticleDatabase:
             "CREATE INDEX IF NOT EXISTS idx_duplicate_key ON articles(duplicate_key)",
             "CREATE INDEX IF NOT EXISTS idx_review_status ON articles(review_status)",
             "CREATE INDEX IF NOT EXISTS idx_filter_status ON articles(filter_status)",
+            "CREATE INDEX IF NOT EXISTS idx_article_category ON articles(article_category)",
         ]:
             conn.execute(sql)
 
@@ -641,6 +643,7 @@ class ArticleDatabase:
         review_status: str | None = None,
         auto_publish_enabled: bool | None = None,
         score_status: str = "done",
+        article_category: str | None = None,
     ) -> bool:
         """Persist scoring result and downstream review status."""
         conn = self._get_conn()
@@ -659,6 +662,7 @@ class ArticleDatabase:
                 score_status = ?,
                 review_status = ?,
                 auto_publish_enabled = ?,
+                article_category = ?,
                 scored_at = ?,
                 updated_at = ?
             WHERE article_id = ?
@@ -670,6 +674,12 @@ class ArticleDatabase:
                 score_status,
                 review_status or current.get("review_status", "manual_review"),
                 int(auto_publish_enabled) if auto_publish_enabled is not None else int(bool(current.get("auto_publish_enabled"))),
+                article_category or current.get("article_category", "other"),
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                article_id,
+            ),
+        )
                 datetime.now().isoformat() if score_status == "done" else current.get("scored_at"),
                 datetime.now().isoformat(),
                 article_id,
@@ -949,6 +959,108 @@ class ArticleDatabase:
                 (window_start.isoformat(), strategy),
             ).fetchone()
         return row[0] if row else 0
+
+    def count_pushes_by_category(self, window_start: datetime, strategy: str = "auto",
+                                 category: str = "ai") -> int:
+        """统计指定时间窗口内特定类别文章的发布数量。
+
+        Args:
+            window_start: 窗口开始时间
+            strategy: 发布策略
+            category: 文章类别（ai/blockchain/mixed/other）
+        """
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM push_history ph
+            JOIN articles a ON ph.article_id = a.article_id
+            WHERE ph.window_start = ? AND ph.strategy = ? AND ph.cms_id IS NOT NULL AND ph.cms_id != ''
+              AND a.article_category = ?
+            """,
+            (window_start.isoformat(), strategy, category),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_auto_publish_candidates_by_category(
+        self,
+        source_keys: list[str],
+        threshold: int,
+        window_start: datetime,
+        window_end: datetime,
+        exclude_categories: list[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """获取自动发布候选文章，支持按类别过滤。
+
+        Args:
+            source_keys: 信源列表
+            threshold: 评分阈值
+            window_start: 窗口开始时间
+            window_end: 窗口结束时间
+            exclude_categories: 要排除的类别列表
+            limit: 返回数量限制
+        """
+        if not source_keys:
+            return []
+        conn = self._get_conn()
+        source_key_list = list(source_keys)
+        placeholders = ", ".join("?" for _ in source_key_list)
+
+        if exclude_categories:
+            exclude_placeholders = ", ".join("?" for _ in exclude_categories)
+            rows = conn.execute(
+                f"""
+                SELECT a.*
+                FROM articles a
+                WHERE a.source_key IN ({placeholders})
+                  AND COALESCE(a.publish_stage, 'local') = 'local'
+                  AND a.filter_status = 'passed'
+                  AND a.review_status = 'auto_candidate'
+                  AND a.auto_publish_enabled = 1
+                  AND a.score IS NOT NULL
+                  AND a.score >= ?
+                  AND a.scored_at IS NOT NULL
+                  AND a.scored_at >= ?
+                  AND a.scored_at < ?
+                  AND a.article_category NOT IN ({exclude_placeholders})
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM push_history ph
+                      WHERE ph.article_id = a.article_id
+                        AND ph.strategy = 'auto'
+                  )
+                ORDER BY a.score DESC, a.publish_time DESC, a.created_at DESC
+                LIMIT ?
+                """,
+                source_key_list + [threshold, window_start.isoformat(), window_end.isoformat()] + exclude_categories + [limit],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                SELECT *
+                FROM articles
+                WHERE source_key IN ({placeholders})
+                  AND COALESCE(publish_stage, 'local') = 'local'
+                  AND filter_status = 'passed'
+                  AND review_status = 'auto_candidate'
+                  AND auto_publish_enabled = 1
+                  AND score IS NOT NULL
+                  AND score >= ?
+                  AND scored_at IS NOT NULL
+                  AND scored_at >= ?
+                  AND scored_at < ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM push_history ph
+                      WHERE ph.article_id = articles.article_id
+                        AND ph.strategy = 'auto'
+                  )
+                ORDER BY score DESC, publish_time DESC, created_at DESC
+                LIMIT ?
+                """,
+                source_key_list + [threshold, window_start.isoformat(), window_end.isoformat(), limit],
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
 
     def list_push_history(self, limit: int = 20, source_keys: list[str] | None = None) -> list[dict]:
         """List recent push history entries."""

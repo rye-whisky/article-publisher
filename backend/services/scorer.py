@@ -23,6 +23,30 @@ DEFAULT_SCORE_PROMPT = """你是区块链与加密行业的内容筛选编辑，
 {"score": 82, "reason": "一句中文说明", "tags": ["DeFi", "以太坊"]}
 """
 
+# AI 类文章关键词（用于识别文章类别）
+AI_KEYWORDS = {
+    # 巨头/核心人物
+    "openai", "gpt", "sora", "anthropic", "claude", "chatgpt",
+    "google", "gemini", "deepmind",
+    "xai", "grok", "elon musk", "马斯克",
+    "tesla", "微软", "英伟达", "nvidia", "amd",
+    "百度", "字节", "字节跳动", "阿里", "阿里巴巴",
+    "腾讯", "meta", "facebook", "amazon", "aws",
+
+    # AI 技术术语
+    "人工智能", "ai", "aigc", "大模型", "llm", "语言模型",
+    "生成式ai", "generative ai", "机器学习", "深度学习",
+    "神经网络", "transformer", "diffusion", "stable diffusion",
+
+    # AI 应用场景
+    "ai芯片", "ai算力", "ai模型", "智能助手", "聊天机器人",
+    "文生图", "图生图", "ai绘画", "ai写作",
+
+    # 中文 AI 媒体/品牌
+    "智谱", "月之暗面", "kimi", "零一万物", "01ai",
+    "minimax", "百川", "科大讯飞", "出门问问",
+}
+
 
 class ScorerService:
     """Generate article scores and convert them into review decisions."""
@@ -63,6 +87,9 @@ class ScorerService:
         score = max(0, min(100, int(score)))
         review_status, auto_publish_enabled = self.decide_review_status(article.get("source_key", ""), score)
 
+        # 检测文章类别（AI/区块链/混合）
+        article_category = self._detect_article_category(article)
+
         return {
             "score": score,
             "reason": parsed["reason"],
@@ -70,6 +97,7 @@ class ScorerService:
             "review_status": review_status,
             "auto_publish_enabled": auto_publish_enabled,
             "raw_response": response or "",
+            "article_category": article_category,
         }
 
     def decide_review_status(self, source_key: str, score: int) -> tuple[str, bool]:
@@ -146,6 +174,57 @@ class ScorerService:
             "reason": content[:300],
             "tags": [],
         }
+
+    @staticmethod
+    def _detect_article_category(article: dict) -> str:
+        """检测文章类别：ai / blockchain / mixed / other
+
+        根据标题中的关键词判断文章类别：
+        - ai: 标题包含 AI 相关关键词
+        - blockchain: 标题包含区块链/加密货币相关关键词
+        - mixed: 同时包含 AI 和区块链关键词
+        - other: 其他
+        """
+        title = article.get("title", "").lower()
+        source_key = article.get("source_key", "")
+
+        # AI 关键词检测
+        has_ai_keyword = False
+        for keyword in AI_KEYWORDS:
+            if keyword.lower() in title:
+                has_ai_keyword = True
+                break
+
+        # 区块链/加密货币关键词
+        blockchain_keywords = {
+            "btc", "bitcoin", "比特币", "以太坊", "eth", "ethereum",
+            "加密货币", "crypto", "cryptocurrency", "defi", "dao",
+            "nft", "web3", "区块链", "blockchain",
+            "coin", "token", "代币", "挖矿", "mining",
+            "交易所", "exchange", "binance", "okx", "coinbase",
+            "solana", "polygon", "avalanche", "arb", "arbitrum",
+            "op", "optimism", "base", "ftx", "algo",
+        }
+        has_blockchain_keyword = False
+        for keyword in blockchain_keywords:
+            if keyword.lower() in title:
+                has_blockchain_keyword = True
+                break
+
+        # AI 信源直接判定为 AI 类别
+        ai_sources = {"kr36", "baoyu", "claude", "qbitai", "aiera", "aibase"}
+        if source_key in ai_sources:
+            return "ai"
+
+        # 判断类别
+        if has_ai_keyword and has_blockchain_keyword:
+            return "mixed"
+        elif has_ai_keyword:
+            return "ai"
+        elif has_blockchain_keyword:
+            return "blockchain"
+        else:
+            return "other"
 
     @staticmethod
     def _fallback_score(article: dict) -> int:
