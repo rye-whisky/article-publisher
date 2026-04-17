@@ -69,8 +69,9 @@ async def lifespan(app: FastAPI):
     log.info("Restoring pipeline schedules...")
     svc.restore_schedules()
     ai_svc.restore_schedules()
-    if svc.push_scheduler:
-        svc.push_scheduler.start()
+    # NOTE: PushScheduler is legacy — superseded by AutoPublishScheduler (publish + broadcast)
+    # if svc.push_scheduler:
+    #     svc.push_scheduler.start()
     if svc.auto_publish_scheduler:
         svc.auto_publish_scheduler.start()
 
