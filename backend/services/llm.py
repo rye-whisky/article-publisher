@@ -263,8 +263,32 @@ def extract_author_info(article: dict, db: ArticleDatabase,
 
 # ───────────────────────── Article optimization workflow ─────────────────────────
 
+OPTIMIZE_SYSTEM_PROMPT = """你是专业的区块链与加密货币领域内容编辑。对文章进行发布前的优化处理。
+
+【任务】
+1. 识别并提取文章头部的作者、编者、译者、编译者等信息
+2. 将这些信息移到文章末尾
+3. 将"编者按"统一替换为"导语"
+4. 保持原文意思和信息完全不变
+
+【输出格式】
+返回 JSON 格式：
+{
+  "blocks": ["block1内容", "block2内容", ...],
+  "author_info": ["作者信息1", "作者信息2"]
+}
+
+【规则】
+- 只处理明确属于作者/编者/译者信息的内容
+- 保留原文的所有 HTML 标签
+- 不要添加任何原文没有的内容
+- 如果没有找到作者信息，author_info 为空数组
+"""
+
+
 def optimize_article_for_publishing(article: dict, db: ArticleDatabase,
-                                    enable_author_info: bool = True) -> dict:
+                                    enable_author_info: bool = True,
+                                    custom_prompt: str = None) -> dict:
     """对文章进行发布前的 LLM 优化。
 
     在评分 >= 70 时调用，优化包括：
@@ -275,6 +299,7 @@ def optimize_article_for_publishing(article: dict, db: ArticleDatabase,
         article: 文章 dict，包含 blocks
         db: 数据库实例
         enable_author_info: 是否启用作者信息提取
+        custom_prompt: 自定义优化 prompt
 
     Returns:
         优化后的 article dict
@@ -284,8 +309,6 @@ def optimize_article_for_publishing(article: dict, db: ArticleDatabase,
 
     log.info("[LLM] 开始优化文章: aid=%s, 作者信息提取=%s",
              article.get("article_id", ""), enable_author_info)
-
-    source_key = article.get("source_key", "")
 
     # 1. 替换"编者按"为"导语"（适用于律动等信源）
     blocks = article.get("blocks", [])
@@ -302,12 +325,102 @@ def optimize_article_for_publishing(article: dict, db: ArticleDatabase,
     # 2. 提取作者信息
     if enable_author_info:
         try:
-            article = extract_author_info(article, db, use_llm=True)
+            # 尝试使用自定义 prompt
+            if custom_prompt:
+                article = extract_author_info_with_prompt(article, db, custom_prompt)
+            else:
+                article = extract_author_info(article, db, use_llm=True)
         except Exception as e:
             log.warning("[LLM] 作者信息提取失败: aid=%s, error=%s",
                         article.get("article_id", ""), e)
 
     log.info("[LLM] 文章优化完成: aid=%s", article.get("article_id", ""))
+    return article
+
+
+def extract_author_info_with_prompt(article: dict, db: ArticleDatabase,
+                                    prompt: str) -> dict:
+    """使用自定义 prompt 提取作者信息。
+
+    Args:
+        article: 文章 dict
+        db: 数据库实例
+        prompt: 自定义 prompt
+
+    Returns:
+        优化后的 article dict
+    """
+    blocks = article.get("blocks", [])
+    if not blocks:
+        return article
+
+    # 检查文章头部（前 15 个非图片 block）
+    header_blocks = []
+    header_indices = []
+    for i, block in enumerate(blocks):
+        if block.get("type") == "img":
+            continue
+        text = block.get("text", "").strip()
+        if text:
+            header_blocks.append(text)
+            header_indices.append(i)
+        if len(header_blocks) >= 15:
+            break
+
+    if not header_blocks:
+        return article
+
+    try:
+        svc = _get_llm_service(db)
+        header_text = "\n".join(f"{i+1}. {t}" for i, t in enumerate(header_blocks))
+        response = svc.chat(
+            "abstract",
+            prompt,
+            header_text,
+            max_tokens=2048,
+            temperature=0.1
+        )
+
+        if response:
+            # 提取 JSON
+            match = re.search(r'\{[\s\S]*\}', response)
+            if match:
+                data = json.loads(match.group(0))
+                author_info = data.get("author_info", [])
+
+                # 移除原文中的作者信息行
+                to_remove = set(data.get("to_remove", []))
+                if to_remove:
+                    indices_to_remove = set()
+                    for remove_text in to_remove:
+                        clean_text = re.sub(r'^\d+\.\s*', '', remove_text).strip()
+                        for idx, original_text in enumerate(header_blocks):
+                            if clean_text in original_text or original_text in clean_text:
+                                indices_to_remove.add(header_indices[idx])
+                                break
+
+                    # 构建新的 blocks
+                    new_blocks = []
+                    for i, block in enumerate(blocks):
+                        if i in indices_to_remove:
+                            continue
+                        new_blocks.append(block)
+
+                    # 在文章末尾添加作者信息
+                    if author_info:
+                        new_blocks.append({"type": "p", "text": ""})
+                        for info in author_info:
+                            new_blocks.append({"type": "p", "text": info})
+
+                    result = {k: v for k, v in article.items()}
+                    result["blocks"] = new_blocks
+                    log.info("[LLM] 自定义 prompt 作者信息提取成功: aid=%s, 提取 %d 条",
+                             article.get("article_id", ""), len(author_info))
+                    return result
+    except Exception as e:
+        log.warning("[LLM] 自定义 prompt 作者信息提取失败: aid=%s, error=%s",
+                    article.get("article_id", ""), e)
+
     return article
 
 

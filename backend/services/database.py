@@ -922,13 +922,32 @@ class ArticleDatabase:
         row = conn.execute("SELECT last_insert_rowid()").fetchone()
         return row[0] if row else 0
 
-    def count_pushes_in_window(self, window_start: datetime, strategy: str = "auto") -> int:
-        """Count how many real pushes (with cms_id) were already made in the given window."""
+    def count_pushes_in_window(self, window_start: datetime, strategy: str = "auto",
+                               source_keys: list[str] | None = None) -> int:
+        """Count how many real pushes (with cms_id) were already made in the given window.
+
+        Args:
+            window_start: 窗口开始时间
+            strategy: 发布策略
+            source_keys: 可选的信源列表，用于统计特定信源的发布数量
+        """
         conn = self._get_conn()
-        row = conn.execute(
-            "SELECT COUNT(*) FROM push_history WHERE window_start = ? AND strategy = ? AND cms_id IS NOT NULL AND cms_id != ''",
-            (window_start.isoformat(), strategy),
-        ).fetchone()
+        if source_keys:
+            source_key_list = list(source_keys)
+            placeholders = ", ".join("?" for _ in source_key_list)
+            row = conn.execute(
+                f"""
+                SELECT COUNT(*) FROM push_history
+                WHERE window_start = ? AND strategy = ? AND cms_id IS NOT NULL AND cms_id != ''
+                  AND source_key IN ({placeholders})
+                """,
+                [window_start.isoformat(), strategy] + source_key_list,
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM push_history WHERE window_start = ? AND strategy = ? AND cms_id IS NOT NULL AND cms_id != ''",
+                (window_start.isoformat(), strategy),
+            ).fetchone()
         return row[0] if row else 0
 
     def list_push_history(self, limit: int = 20, source_keys: list[str] | None = None) -> list[dict]:

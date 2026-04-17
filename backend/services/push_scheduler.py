@@ -59,13 +59,53 @@ class PushScheduler:
         if pushed_count >= max_per_window:
             return {"ok": True, "reason": "window_full", "window_start": window_start.isoformat()}
 
-        candidates = self.database.get_auto_publish_candidates(
-            source_keys=source_keys,
-            threshold=threshold,
-            window_start=window_start,
-            window_end=window_end,
-            limit=5,
+        # 检查当日 AI 文章数量规则
+        ai_sources = self._get_ai_sources()
+        blockchain_sources = [s for s in source_keys if s not in ai_sources]
+
+        # 获取今日零点
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # 统计今日已发布的 AI 文章数量
+        ai_pushed_today = self.database.count_pushes_in_window(
+            today_start,
+            strategy="auto",
+            source_keys=ai_sources
         )
+
+        # AI 文章数量限制（默认 2 篇）
+        ai_daily_limit = self._get_int_setting("ai_daily_limit", 2)
+
+        # 如果今日 AI 文章数量小于限制，优先发布区块链文章
+        if ai_pushed_today < ai_daily_limit and blockchain_sources:
+            log.info("PushScheduler: 今日 AI 文章 %d 篇 < %d 篇限制，优先发布区块链文章",
+                     ai_pushed_today, ai_daily_limit)
+            # 优先使用区块链信源获取候选文章
+            candidates = self.database.get_auto_publish_candidates(
+                source_keys=blockchain_sources,
+                threshold=threshold,
+                window_start=window_start,
+                window_end=window_end,
+                limit=5,
+            )
+            # 如果区块链文章没有候选，再尝试所有信源
+            if not candidates:
+                candidates = self.database.get_auto_publish_candidates(
+                    source_keys=source_keys,
+                    threshold=threshold,
+                    window_start=window_start,
+                    window_end=window_end,
+                    limit=5,
+                )
+        else:
+            candidates = self.database.get_auto_publish_candidates(
+                source_keys=source_keys,
+                threshold=threshold,
+                window_start=window_start,
+                window_end=window_end,
+                limit=5,
+            )
+
         if not candidates:
             return {"ok": True, "reason": "no_candidates", "window_start": window_start.isoformat()}
 
@@ -156,6 +196,10 @@ class PushScheduler:
             except json.JSONDecodeError:
                 pass
         return {item.strip() for item in raw.split(",") if item.strip()}
+
+    def _get_ai_sources(self) -> set[str]:
+        """返回 AI 信源列表，用于 AI 文章数量限制规则。"""
+        return {"kr36", "baoyu", "claude", "qbitai", "aiera", "aibase"}
 
     @staticmethod
     def _window_start(now: datetime, window_hours: int) -> datetime:

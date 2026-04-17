@@ -134,6 +134,7 @@ const buildWorkflowSettingsForm = (settingsData = {}) => ({
   broadcast_check_interval_minutes: settingsData.broadcast_check_interval_minutes || '15',
   llm_optimization_enabled: (settingsData.llm_optimization_enabled ?? '0') === '1',
   llm_author_info_enabled: (settingsData.llm_author_info_enabled ?? '0') === '1',
+  ai_daily_limit: settingsData.ai_daily_limit || '2',
 })
 
 const workflowSettingsToPayload = (form) => ({
@@ -149,6 +150,7 @@ const workflowSettingsToPayload = (form) => ({
   broadcast_check_interval_minutes: String(form.broadcast_check_interval_minutes || '15'),
   llm_optimization_enabled: form.llm_optimization_enabled ? '1' : '0',
   llm_author_info_enabled: form.llm_author_info_enabled ? '1' : '0',
+  ai_daily_limit: String(form.ai_daily_limit || '2'),
 })
 
 const parseKeywordLibraryInput = (value) => {
@@ -1601,6 +1603,7 @@ function PromptPage() {
   const [abstractPrompt, setAbstractPrompt] = useState('')
   const [editPrompt, setEditPrompt] = useState('')
   const [scorePrompt, setScorePrompt] = useState('')
+  const [optimizePrompt, setOptimizePrompt] = useState('')
   const [workflow, setWorkflow] = useState({ metrics: {}, scheduler: { history: [], auto_sources: [] }, broadcast: {} })
   const [settingsForm, setSettingsForm] = useState(buildWorkflowSettingsForm())
   const [loading, setLoading] = useState(true)
@@ -1617,6 +1620,7 @@ function PromptPage() {
       setAbstractPrompt(settingsData.prompt_abstract || '')
       setEditPrompt(settingsData.prompt_edit || '')
       setScorePrompt(settingsData.prompt_score || '')
+      setOptimizePrompt(settingsData.prompt_optimize || '')
       setSettingsForm(buildWorkflowSettingsForm(settingsData))
       setWorkflow(workflowData || { metrics: {}, scheduler: { history: [] }, broadcast: {} })
     } catch (e) {
@@ -1662,6 +1666,7 @@ function PromptPage() {
         prompt_abstract: abstractPrompt,
         prompt_edit: editPrompt,
         prompt_score: scorePrompt,
+        prompt_optimize: optimizePrompt,
         ...workflowSettingsToPayload(settingsForm),
       })
       alert('保存成功，下一次运行会直接读取新的 Prompt 和自动发布设置，无需重启服务器。')
@@ -1821,6 +1826,17 @@ function PromptPage() {
               onChange={e => setSettingsForm(prev => ({ ...prev, push_check_interval_minutes: e.target.value }))}
             />
           </div>
+          <div className="settings-group">
+            <label>AI 文章每日上限</label>
+            <input
+              type="number"
+              value={settingsForm.ai_daily_limit || '2'}
+              min="0"
+              max="10"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, ai_daily_limit: e.target.value }))}
+            />
+          </div>
         </div>
         <div className="settings-group">
           <label>自动发布信源</label>
@@ -1957,6 +1973,17 @@ function PromptPage() {
               <span>{(settingsForm.llm_author_info_enabled || false) ? '已开启' : '已关闭'}</span>
             </label>
           </div>
+        </div>
+        <div className="settings-group">
+          <label>LLM 优化 Prompt</label>
+          <textarea
+            value={optimizePrompt}
+            onChange={e => setOptimizePrompt(e.target.value)}
+            rows={8}
+            placeholder="LLM 发布优化 Prompt"
+            className="workflow-textarea"
+            disabled={isGuest || !(settingsForm.llm_optimization_enabled || false)}
+          />
         </div>
       </div>
 

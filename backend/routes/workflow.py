@@ -94,6 +94,7 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
     # 获取 LLM 优化设置
     enable_llm_optimization = svc.database.get_setting("llm_optimization_enabled") == "true"
     enable_author_info = svc.database.get_setting("llm_author_info_enabled") == "true"
+    llm_optimize_prompt = svc.database.get_setting("prompt_optimize") or ""
 
     unscored = svc.database.list_unscored_articles(since_date=since_date, limit=500)
     if not unscored:
@@ -126,7 +127,8 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
                         article = optimize_article_for_publishing(
                             article,
                             svc.database,
-                            enable_author_info=enable_author_info
+                            enable_author_info=enable_author_info,
+                            custom_prompt=llm_optimize_prompt if llm_optimize_prompt else None
                         )
                         results["optimized"] += 1
                     except Exception as exc:

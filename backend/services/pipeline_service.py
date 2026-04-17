@@ -351,6 +351,7 @@ class PipelineService:
             # LLM 优化文章（如果启用）
             enable_llm_optimization = self.database.get_setting("llm_optimization_enabled") == "true"
             enable_author_info = self.database.get_setting("llm_author_info_enabled") == "true"
+            llm_optimize_prompt = self.database.get_setting("prompt_optimize") or ""
 
             if enable_llm_optimization:
                 try:
@@ -358,7 +359,8 @@ class PipelineService:
                     article = optimize_article_for_publishing(
                         article,
                         self.database,
-                        enable_author_info=enable_author_info
+                        enable_author_info=enable_author_info,
+                        custom_prompt=llm_optimize_prompt if llm_optimize_prompt else None
                     )
                     log.info("LLM optimization completed for %s (score=%d)", article["article_id"], score)
                 except Exception as exc:
