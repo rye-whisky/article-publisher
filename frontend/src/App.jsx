@@ -2259,24 +2259,26 @@ function ProfilePage({ onLogout }) {
   // Per-task form state: { abstract: { factory, api_url, api_key, model }, edit: { ... } }
   const [llmForms, setLlmForms] = useState({})
 
-  useEffect(() => {
+  const loadLlmConfig = () => {
+    setLlmLoading(true)
     api.getLlmTasks().then(data => {
       setLlmTasks(data.tasks || {})
       setLlmFactories(data.factories || {})
-      // Initialize form state from resolved config
       const forms = {}
       for (const [taskId, info] of Object.entries(data.tasks || {})) {
         const cfg = info.config || {}
         forms[taskId] = {
           factory: cfg.factory || 'OpenAI',
           api_url: cfg.api_url || '',
-          api_key: '',  // never pre-fill key (masked)
+          api_key: cfg.api_key || '',  // show masked key from backend so user knows it's saved
           model: cfg.model || '',
         }
       }
       setLlmForms(forms)
     }).catch(console.error).finally(() => setLlmLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { loadLlmConfig() }, [])
 
   const handleFactoryChange = (task, factory) => {
     const defaultBase = llmFactories[factory] || ''
@@ -2296,6 +2298,7 @@ function ProfilePage({ onLogout }) {
         updates[`llm_${task}_${field === 'api_url' ? 'api_url' : field}`] = val
       }
       await api.updateSettings(updates)
+      loadLlmConfig()  // refresh form to show masked key after save
       alert(t('saveSuccess'))
     } catch (e) {
       alert(e.message)
@@ -2315,6 +2318,7 @@ function ProfilePage({ onLogout }) {
         updates[`llm_${task}_${field === 'api_url' ? 'api_url' : field}`] = val
       }
       await api.updateSettings(updates)
+      loadLlmConfig()  // refresh form after save-before-test
       const result = await api.testLlmTask(task)
       alert(`${t('testSuccess')}\nReply: ${result.reply}`)
     } catch (e) {
