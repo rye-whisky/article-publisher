@@ -348,6 +348,22 @@ class PipelineService:
         # Auto-save CMS draft for 70+ scored articles
         score = score_result["score"]
         if score is not None and score >= 70:
+            # LLM 优化文章（如果启用）
+            enable_llm_optimization = self.database.get_setting("llm_optimization_enabled") == "true"
+            enable_author_info = self.database.get_setting("llm_author_info_enabled") == "true"
+
+            if enable_llm_optimization:
+                try:
+                    from services.llm import optimize_article_for_publishing
+                    article = optimize_article_for_publishing(
+                        article,
+                        self.database,
+                        enable_author_info=enable_author_info
+                    )
+                    log.info("LLM optimization completed for %s (score=%d)", article["article_id"], score)
+                except Exception as exc:
+                    log.warning("LLM optimization failed for %s: %s", article["article_id"], exc)
+
             try:
                 self.save_article_draft(article, strategy="auto_score")
                 log.info("Auto-saved draft for %s (score=%d)", article["article_id"], score)
