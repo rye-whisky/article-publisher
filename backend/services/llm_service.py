@@ -63,6 +63,10 @@ class ModelProvider:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_message})
 
+        # ZHIPU-AI thinking models: disable thinking by default for reliable text output
+        if self.factory == "ZHIPU-AI" and "extra_body" not in kwargs:
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
         resp = self.client.chat.completions.create(
             model=self.model_name,
             messages=messages,
@@ -73,7 +77,11 @@ class ModelProvider:
         choice = resp.choices[0] if resp.choices else None
         if not choice or not choice.message:
             return ""
-        content = choice.message.content or ""
+        msg = choice.message
+        content = msg.content or ""
+        # Fallback: some thinking models put actual reply in reasoning_content
+        if not content and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+            content = msg.reasoning_content
         if isinstance(content, list):
             text_parts = []
             for item in content:
@@ -177,12 +185,6 @@ class LLMService:
         if provider is None:
             log.warning("[LLMService] task=%s not configured", task)
             return None
-        if (
-            task == "score"
-            and provider.factory == "ZHIPU-AI"
-            and "extra_body" not in kwargs
-        ):
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         return provider.chat(system_prompt, user_message, **kwargs)
 
     def test_connection(self, task: str) -> dict:
@@ -190,10 +192,7 @@ class LLMService:
         provider = self.get_provider(task)
         if provider is None:
             return {"ok": False, "reply": "", "error": f"任务 '{task}' 未配置模型"}
-        kwargs = {}
-        if task == "score" and provider.factory == "ZHIPU-AI":
-            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
-        return provider.test(**kwargs)
+        return provider.test()
 
     def get_task_settings(self, task: str) -> dict:
         """Return the resolved settings dict for a task (api_key masked)."""
