@@ -680,11 +680,6 @@ class ArticleDatabase:
                 article_id,
             ),
         )
-                datetime.now().isoformat() if score_status == "done" else current.get("scored_at"),
-                datetime.now().isoformat(),
-                article_id,
-            ),
-        )
         conn.commit()
         return cursor.rowcount > 0
 
