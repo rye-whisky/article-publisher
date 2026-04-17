@@ -105,7 +105,9 @@ class FilterService:
                 article["filter_reason"] = f"content_block:{rule.get('pattern', '')}"
                 return article
 
-        article["blocks"] = self._apply_tail_cut_rules(source_key, blocks)
+        blocks = self._apply_tail_cut_rules(source_key, blocks)
+        blocks = self._clean_preamble(blocks)
+        article["blocks"] = blocks
         article["filter_status"] = article.get("filter_status", "passed")
         return article
 
@@ -159,3 +161,57 @@ class FilterService:
             except re.error:
                 return False
         return pattern.lower() in text.lower()
+
+    @staticmethod
+    def _clean_preamble(blocks: list[dict]) -> list[dict]:
+        """Remove pull quotes and relocate attribution lines from article start.
+
+        Rules applied to consecutive leading text blocks:
+          - Pull quotes (entire text wrapped in "" or "") → DELETE
+          - Attribution/metadata lines → MOVE to end of article
+          - First "real" content block stops the preamble scan
+        """
+        if not blocks:
+            return blocks
+
+        # Patterns for attribution/metadata that should move to end
+        _ATTRIB_RE = re.compile(
+            r'^(?:整理\s*[&＆]\s*编译|编译\s*[：:]|嘉宾\s*[：:]|主持人\s*[：:]'
+            r'|播客源\s*[：:]|原标题\s*[：:]|播出日期\s*[：:]|来源\s*[：:]'
+            r'|作者\s*[：:]|文稿整理|文字整理)',
+        )
+        # Pull quote: entire text wrapped in Chinese curly quotes or straight quotes
+        _PULL_QUOTE_RE = re.compile(r'^[\u201c"].+[\u201d"]$')
+
+        preamble_meta = []  # blocks to relocate
+        content_start = 0
+
+        for i, block in enumerate(blocks):
+            if block.get("type") == "img":
+                break  # image stops preamble scan
+            text = (block.get("text") or "").strip()
+            if not text:
+                continue
+
+            if _PULL_QUOTE_RE.match(text):
+                # Pull quote → skip (delete)
+                continue
+
+            if _ATTRIB_RE.match(text):
+                # Attribution → collect for moving to end
+                preamble_meta.append(block)
+                continue
+
+            # First block that's neither pull quote nor attribution → real content
+            content_start = i
+            break
+        else:
+            # All blocks were preamble (unlikely but handle it)
+            return blocks
+
+        if not preamble_meta:
+            return blocks
+
+        # Remove preamble meta blocks, then append them at the end
+        remaining = [b for b in blocks if b not in preamble_meta]
+        return remaining + preamble_meta
