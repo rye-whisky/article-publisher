@@ -73,6 +73,10 @@ def generate_abstract(article: dict, db: ArticleDatabase) -> str:
                 parts = abstract.split("：", 1)
                 if len(parts) > 1:
                     abstract = parts[1].strip()
+            # Clean: strip markdown bold/italic markers, normalize quotes
+            abstract = re.sub(r'\*+', '', abstract)
+            abstract = abstract.replace('"', '\u201c').replace('"', '\u201d')
+            abstract = abstract.strip()
             log.info("[LLM] 摘要生成成功: aid=%s, 字数=%d", aid, len(abstract))
             return abstract
     except Exception as e:
