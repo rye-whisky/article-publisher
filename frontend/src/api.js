@@ -157,6 +157,7 @@ export const api = {
   getWorkflowStatus: () => request('/workflow/status'),
   runWorkflowPushCheck: () => request('/workflow/push-check', { method: 'POST' }),
   runWorkflowBroadcastCheck: () => request('/workflow/broadcast-check', { method: 'POST' }),
+  rescoreUnscored: (sinceDate = '2026-04-17') => request(`/workflow/rescore-unscored?since_date=${sinceDate}`, { method: 'POST' }),
   getBlocklist: () => request('/blocklist'),
   createBlocklistRule: (data) => request('/blocklist', { method: 'POST', body: JSON.stringify(data) }),
   updateBlocklistRule: (id, data) => request(`/blocklist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

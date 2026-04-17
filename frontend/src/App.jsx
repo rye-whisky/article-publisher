@@ -1601,6 +1601,8 @@ function PromptPage() {
   const [settingsForm, setSettingsForm] = useState(buildWorkflowSettingsForm())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [rescoring, setRescoring] = useState(false)
+  const [unscoredCount, setUnscoredCount] = useState(0)
 
   const refreshWorkflow = useCallback(async () => {
     try {
@@ -1619,6 +1621,25 @@ function PromptPage() {
       setLoading(false)
     }
   }, [])
+
+  const handleRescoreUnscored = async () => {
+    const confirmMsg = '批量重新评分 4月17日及之后的未评分文章？\n' +
+      '- 70-74 分的文章会自动保存为 CMS 草稿\n' +
+      '- 75+ 分的文章将进入自动发布队列\n' +
+      '处理可能需要几分钟，请勿关闭页面。'
+    if (!confirm(confirmMsg)) return
+
+    setRescoring(true)
+    try {
+      const result = await api.rescoreUnscored('2026-04-17')
+      alert(`处理完成！\n处理: ${result.processed} 篇\n草稿: ${result.drafts_saved} 篇\n失败: ${result.failed} 篇`)
+      refreshWorkflow()
+    } catch (e) {
+      alert(`处理失败: ${e.message}`)
+    } finally {
+      setRescoring(false)
+    }
+  }
 
   useEffect(() => {
     refreshWorkflow()
@@ -1692,6 +1713,26 @@ function PromptPage() {
           <div className="value">{workflow.metrics?.published_articles ?? 0}</div>
         </div>
       </div>
+
+      {!isGuest && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-header">
+            <h2>数据管理</h2>
+          </div>
+          <p style={{ fontSize: 14, color: 'var(--text)', marginTop: 0, marginBottom: 12 }}>
+            重新评分 4月17日及之后未评分的文章，70-74分自动保存草稿，75+分进入自动发布队列。
+          </p>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleRescoreUnscored}
+              disabled={rescoring}
+            >
+              {rescoring ? '处理中...' : '批量重新评分 (4月17日起)'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-header">
