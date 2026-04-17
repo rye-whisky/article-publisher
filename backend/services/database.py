@@ -1038,6 +1038,9 @@ class ArticleDatabase:
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
+    # Sources excluded from auto-publish (scraper removed but DB may have stale data)
+    AUTO_PUBLISH_EXCLUDED_SOURCES = {"bestblogs"}
+
     def get_auto_publish_broadcast_candidates(
         self,
         min_score: int = 75,
@@ -1046,16 +1049,20 @@ class ArticleDatabase:
         """Get unpublished articles ready for auto publish + broadcast.
 
         Only selects articles that haven't been published or broadcast yet.
+        Excludes sources in AUTO_PUBLISH_EXCLUDED_SOURCES.
         """
+        excluded = self.AUTO_PUBLISH_EXCLUDED_SOURCES
+        placeholders = ",".join("?" * len(excluded))
         conn = self._get_conn()
         rows = conn.execute(
-            """
+            f"""
             SELECT *
             FROM articles
             WHERE COALESCE(publish_stage, 'local') = 'local'
               AND filter_status = 'passed'
               AND score IS NOT NULL
               AND score >= ?
+              AND source_key NOT IN ({placeholders})
               AND NOT EXISTS (
                   SELECT 1 FROM push_history ph
                   WHERE ph.article_id = articles.article_id AND ph.strategy = 'auto'
@@ -1067,7 +1074,7 @@ class ArticleDatabase:
             ORDER BY score DESC, created_at DESC
             LIMIT ?
             """,
-            (min_score, limit),
+            (min_score, *excluded, limit),
         ).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
