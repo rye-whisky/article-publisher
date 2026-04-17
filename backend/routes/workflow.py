@@ -70,3 +70,55 @@ def run_broadcast_check(request: Request, _admin=Depends(require_admin)):
     if not svc.auto_publish_scheduler:
         raise HTTPException(501, "Auto-publish scheduler not configured")
     return svc.auto_publish_scheduler.run_once()
+
+
+@router.post("/workflow/rescore-unscored")
+def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
+    """Rescore all articles that don't have a score yet.
+
+    Query params:
+        since_date: ISO date string (e.g., "2026-04-17"). Only articles created ON or AFTER this date.
+                  Default: "2026-04-17" (fix date for LLM config issue).
+    """
+    svc = request.app.state.pipeline_service
+    if not svc.database or not svc.scorer:
+        raise HTTPException(501, "Database or scorer not configured")
+
+    # Default to 2026-04-17 (LLM fix date) if not specified
+    since_date = request.query_params.get("since_date", "2026-04-17")
+
+    unscored = svc.database.list_unscored_articles(since_date=since_date, limit=500)
+    if not unscored:
+        return {"ok": True, "count": 0, "message": f"没有未评分的文章 (自 {since_date})"}
+
+    results = {"processed": 0, "drafts_saved": 0, "failed": 0, "since_date": since_date}
+    for article in unscored:
+        try:
+            score_result = svc.scorer.score_article(article)
+            svc.database.update_scoring(
+                article_id=article["article_id"],
+                score=score_result["score"],
+                score_reason=score_result["reason"],
+                tags=score_result["tags"],
+                review_status=score_result["review_status"],
+                auto_publish_enabled=score_result["auto_publish_enabled"],
+                score_status="done",
+            )
+
+            # Auto-save CMS draft for 70-74 scored articles
+            score = score_result["score"]
+            if score is not None and 70 <= score < 75:
+                try:
+                    svc.save_article_draft(article, strategy="auto_score")
+                    results["drafts_saved"] += 1
+                except Exception as exc:
+                    log.warning("Auto-draft save failed for %s: %s", article["article_id"], exc)
+
+            results["processed"] += 1
+        except Exception as exc:
+            log.error("Rescore failed for %s: %s", article["article_id"], exc)
+            results["failed"] += 1
+
+    log.info("Rescored %d articles (since %s), %d drafts saved, %d failed",
+             results["processed"], since_date, results["drafts_saved"], results["failed"])
+    return {"ok": True, **results}

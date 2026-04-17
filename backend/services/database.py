@@ -1012,6 +1012,41 @@ class ArticleDatabase:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_unscored_articles(self, since_date: str | None = None, limit: int = 500) -> list[dict]:
+        """List articles without scores, optionally filtered by created_at date.
+
+        Args:
+            since_date: ISO date string (e.g., "2026-04-17"). Only articles created ON or AFTER this date.
+            limit: Max number of articles to return.
+        """
+        conn = self._get_conn()
+        if since_date:
+            # Use created_at >= since_date + "T00:00:00" to include full day
+            cutoff = f"{since_date}T00:00:00"
+            rows = conn.execute(
+                """
+                SELECT * FROM articles
+                WHERE score IS NULL
+                  AND created_at >= ?
+                  AND filter_status = 'passed'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (cutoff, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM articles
+                WHERE score IS NULL
+                  AND filter_status = 'passed'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
     def get_auto_broadcast_candidates(
         self,
         grace_minutes: int = 15,
