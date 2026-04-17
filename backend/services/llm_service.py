@@ -36,6 +36,7 @@ FACTORY_DEFAULTS = {
 TASKS = {
     "abstract": "摘要生成",
     "edit":     "编辑正文",
+    "score":    "内容评分",
 }
 
 # ───────────────────────── ModelProvider ─────────────────────────
@@ -55,7 +56,7 @@ class ModelProvider:
         )
 
     def chat(self, system_prompt: str, user_message: str,
-             max_tokens: int = 4096, temperature: float = 0.3) -> str:
+             max_tokens: int = 4096, temperature: float = 0.3, **kwargs) -> str:
         """Synchronous chat call. Returns assistant text or raises."""
         messages = []
         if system_prompt:
@@ -67,16 +68,28 @@ class ModelProvider:
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
+            **kwargs,
         )
         choice = resp.choices[0] if resp.choices else None
         if not choice or not choice.message:
             return ""
-        return (choice.message.content or "").strip()
+        content = choice.message.content or ""
+        if isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text_parts.append(item.get("text", ""))
+                else:
+                    text_parts.append(str(item))
+            content = "".join(text_parts)
+        return str(content).strip()
 
-    def test(self) -> dict:
+    def test(self, **kwargs) -> dict:
         """Quick connectivity test. Returns {"ok": bool, "reply": str, "error": str}."""
         try:
-            reply = self.chat("", "Hi, reply with just OK.", max_tokens=8)
+            reply = self.chat("", "Hi, reply with just OK.", max_tokens=32, **kwargs)
+            if not reply:
+                return {"ok": False, "reply": "", "error": "empty reply"}
             return {"ok": True, "reply": reply[:100], "error": ""}
         except Exception as e:
             return {"ok": False, "reply": "", "error": str(e)[:200]}
@@ -164,6 +177,12 @@ class LLMService:
         if provider is None:
             log.warning("[LLMService] task=%s not configured", task)
             return None
+        if (
+            task == "score"
+            and provider.factory == "ZHIPU-AI"
+            and "extra_body" not in kwargs
+        ):
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         return provider.chat(system_prompt, user_message, **kwargs)
 
     def test_connection(self, task: str) -> dict:
@@ -171,7 +190,10 @@ class LLMService:
         provider = self.get_provider(task)
         if provider is None:
             return {"ok": False, "reply": "", "error": f"任务 '{task}' 未配置模型"}
-        return provider.test()
+        kwargs = {}
+        if task == "score" and provider.factory == "ZHIPU-AI":
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        return provider.test(**kwargs)
 
     def get_task_settings(self, task: str) -> dict:
         """Return the resolved settings dict for a task (api_key masked)."""

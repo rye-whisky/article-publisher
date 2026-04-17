@@ -24,6 +24,7 @@ def get_status(request: Request):
         "last_updated": state.get("updated_at"),
         "schedules": svc.get_source_schedules(),
         "sources": sources,
+        "workflow": svc.get_workflow_status(),
     }
 
 

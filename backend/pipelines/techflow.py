@@ -92,10 +92,11 @@ class TechFlowScraper(BaseScraper):
             "source_key": "techflow",
             "article_id_full": f"techflow:{item['article_id']}",
             "article_id": item["article_id"],
+            "raw_id": item["article_id"],
             "title": title,
             "author": "",
             "source": item["source"],
-            "publish_time": datetime.now().strftime("%Y-%m-%d"),
+            "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "original_url": item["original_url"],
             "cover_src": cover_src,
             "blocks": blocks,
@@ -105,12 +106,15 @@ class TechFlowScraper(BaseScraper):
 
     def save(self, article: dict) -> Path:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        path = self.output_dir / f"techflow_{article['article_id']}.json"
+        raw_id = article.get("raw_id", str(article.get("article_id", "")).split(":")[-1])
+        path = self.output_dir / f"techflow_{raw_id}.json"
         content = json.dumps(
             {
-                "article_id": article["article_id"],
+                "article_id": raw_id,
                 "title": article["title"],
                 "source": article["source"],
+                "author": article.get("author", ""),
+                "publish_time": article.get("publish_time", ""),
                 "original_url": article["original_url"],
                 "cover_src": article.get("cover_src", ""),
                 "blocks": article["blocks"],

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """LLM tasks: AI-powered abstract generation and article editing."""
 
+import json
 import logging
 import re
 from typing import Optional
@@ -80,6 +81,39 @@ def generate_abstract(article: dict, db: ArticleDatabase) -> str:
     fallback = _naive_abstract(article)
     log.warning("[LLM] 回退到朴素截断: aid=%s, 截断摘要=%s", aid, fallback[:60])
     return fallback
+
+
+def semantic_dedup(title: str, recent_titles: list[str], db: ArticleDatabase) -> bool:
+    """Use LLM to check if *title* is semantically duplicate of any *recent_titles*.
+
+    Returns True if the title is considered a duplicate.
+    """
+    if not recent_titles:
+        return False
+
+    titles_list = "\n".join(f"{i+1}. {t}" for i, t in enumerate(recent_titles))
+    prompt = (
+        "你是一个新闻去重判断助手。判断以下新标题是否与已有标题列表中的任何一篇语义重复"
+        "（指同一事件、同一话题，不只是关键词相似）。\n\n"
+        f"已有标题：\n{titles_list}\n\n"
+        f"新标题：{title}\n\n"
+        "请只回答 JSON：{\"duplicate\": true} 或 {\"duplicate\": false}"
+    )
+
+    try:
+        svc = _get_llm_service(db)
+        # Use score task's LLM for dedup
+        response = svc.chat("score", prompt, title, max_tokens=256, temperature=0.1)
+        if response:
+            import re as _re
+            match = _re.search(r'\{[^}]+\}', response)
+            if match:
+                data = json.loads(match.group(0))
+                return bool(data.get("duplicate", False))
+    except Exception as e:
+        log.warning("[LLM] semantic_dedup failed, assuming not duplicate: %s", e)
+
+    return False
 
 
 # ───────────────────────── Article editing ─────────────────────────

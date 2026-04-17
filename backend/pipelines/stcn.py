@@ -120,6 +120,7 @@ class StcnScraper(BaseScraper):
             **item,
             "source_key": "stcn",
             "article_id_full": f"stcn:{item['article_id']}",
+            "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "blocks": self._blocks_from_plain_text(body),
         }
 
@@ -212,7 +213,7 @@ class StcnScraper(BaseScraper):
                         "article_id": article_id,
                         "title": item.get("title") or article_id,
                         "author": author or item.get("author", ""),
-                        "publish_time": publish_time or item.get("publish_time", ""),
+                        "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "original_url": url,
                         "source": item.get("source", "券商中国"),
                     }
@@ -231,20 +232,11 @@ class StcnScraper(BaseScraper):
             ma = re.search(r"券商中国\s*(沐阳|周乐)", text)
             if ma:
                 author = ma.group(1)
-        if not publish_time:
-            mt = re.search(r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}|\d{2}-\d{2}\s+\d{2}:\d{2}|\d{2}:\d{2})", text)
-            if mt:
-                t = mt.group(1)
-                publish_time = (
-                    f"{self._today_str()} {t}"
-                    if re.fullmatch(r"\d{2}:\d{2}", t)
-                    else (f"2026-{t}" if re.fullmatch(r"\d{2}-\d{2}\s+\d{2}:\d{2}", t) else t)
-                )
         return {
             "article_id": article_id,
             "title": title,
             "author": author,
-            "publish_time": publish_time,
+            "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "original_url": url,
             "source": "券商中国",
         }

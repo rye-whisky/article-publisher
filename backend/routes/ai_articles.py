@@ -19,12 +19,13 @@ def list_ai_articles(
     tag: str = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    sort_by: str = Query("time", pattern="^(time|score)$"),
 ):
     """List AI articles with filters and pagination."""
     svc = request.app.state.ai_pipeline_service
     total, articles = svc.list_articles(
         source=source, category=category, min_score=min_score,
-        tag=tag, page=page, page_size=page_size,
+        tag=tag, page=page, page_size=page_size, sort_by=sort_by,
     )
 
     # Strip blocks for list view
@@ -198,6 +199,26 @@ def ingest_ai_articles(request: Request, _admin=Depends(require_admin)):
     return {"status": "ok", "summary": summary}
 
 
+@router.post("/articles/{article_id}/draft")
+def save_ai_article_draft(request: Request, article_id: str, _admin=Depends(require_admin)):
+    """Save an AI article to the CMS draft box (admin only)."""
+    svc = request.app.state.ai_pipeline_service
+    article = svc.get_article(article_id)
+    if not article:
+        raise HTTPException(404, "Article not found")
+    if article.get("publish_stage") in {"published", "broadcasted"}:
+        raise HTTPException(400, "Article is already published; use publish to update it")
+
+    pipeline_svc = request.app.state.pipeline_service
+    try:
+        result = pipeline_svc.save_article_draft(article, strategy="manual")
+        if result:
+            return {"status": "ok", "cms_id": result.get("cms_id", ""), "publish_stage": "draft"}
+        raise HTTPException(500, "Publish returned no result")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/articles/{article_id}/publish")
 def publish_ai_article(request: Request, article_id: str, _admin=Depends(require_admin)):
     """Publish an AI article to CMS (admin only)."""
@@ -206,13 +227,11 @@ def publish_ai_article(request: Request, article_id: str, _admin=Depends(require
     if not article:
         raise HTTPException(404, "Article not found")
 
-    # Use existing publisher
     pipeline_svc = request.app.state.pipeline_service
     try:
-        result = pipeline_svc.publisher.publish(article)
+        result = pipeline_svc.publish_article(article, strategy="manual")
         if result:
-            svc.database.mark_published(article_id, result.get("cms_id", ""))
-            return {"status": "ok", "cms_id": result.get("cms_id", "")}
+            return {"status": "ok", "cms_id": result.get("cms_id", ""), "publish_stage": "published"}
         raise HTTPException(500, "Publish returned no result")
     except Exception as e:
         raise HTTPException(500, str(e))

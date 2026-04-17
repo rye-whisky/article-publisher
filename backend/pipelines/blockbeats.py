@@ -4,6 +4,7 @@
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -124,6 +125,7 @@ class BlockBeatsScraper(BaseScraper):
             "article_id_full": item.get("article_id_full", f"blockbeats:{item.get('article_id', '')}"),
             "title": title,
             "source": ARTICLE_SOURCE_NAME,
+            "publish_time": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "cover_src": cover_src,
             "blocks": blocks,
         }

@@ -8,5 +8,6 @@ from .auth import router as auth_router
 from .database import router as database_router
 from .settings import router as settings_router
 from .ai_articles import router as ai_articles_router
+from .workflow import router as workflow_router
 
-__all__ = ["status_router", "articles_router", "pipeline_router", "logs_router", "scheduler_router", "memory_router", "auth_router", "database_router", "settings_router", "ai_articles_router"]
+__all__ = ["status_router", "articles_router", "pipeline_router", "logs_router", "scheduler_router", "memory_router", "auth_router", "database_router", "settings_router", "ai_articles_router", "workflow_router"]

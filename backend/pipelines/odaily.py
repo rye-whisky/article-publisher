@@ -114,13 +114,7 @@ class OdailyScraper(BaseScraper):
         summary = data.get("summary", "") or data.get("aiSummary", "")
         author_info = data.get("author", {})
         author = author_info.get("nickname", "") if isinstance(author_info, dict) else str(author_info)
-        ts = data.get("publishTimestamp")
-        publish_time = ""
-        if ts:
-            try:
-                publish_time = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                publish_time = str(ts)
+        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         # Parse content HTML into blocks
         content_html = data.get("content", "")

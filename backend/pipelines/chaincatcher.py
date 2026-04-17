@@ -4,6 +4,7 @@
 import json
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -83,9 +84,8 @@ class ChainCatcherScraper(BaseScraper):
         og = soup.find("meta", property="og:image")
         cover_src = og["content"] if og else ""
 
-        # Publish time
-        publish_time_el = soup.find("meta", attrs={"name": "published_time"})
-        publish_time = publish_time_el.get("content", "") if publish_time_el else ""
+        # Publish time — use crawl time
+        publish_time = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         # Content area — ChainCatcher uses .rich_text_content class
         content = soup.select_one(".rich_text_content")

@@ -56,8 +56,8 @@ export const api = {
   getState: () => request('/state'),
 
   // Articles
-  getArticles: (source = 'all', page = 1, pageSize = 20) =>
-    request(`/articles?source=${source}&page=${page}&page_size=${pageSize}`),
+  getArticles: (source = 'all', page = 1, pageSize = 20, sortBy = 'time') =>
+    request(`/articles?source=${source}&page=${page}&page_size=${pageSize}&sort_by=${sortBy}`),
   getArticle: (id) => request(`/articles/${encodeURIComponent(id)}`),
   createArticle: (data) => request('/articles', { method: 'POST', body: JSON.stringify(data) }),
   updateArticle: (id, data) => request(`/articles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -98,6 +98,9 @@ export const api = {
   aiEditArticle: (id, systemPrompt, userPrompt) => request(`/articles/${encodeURIComponent(id)}/ai-edit`, {
     method: 'POST', body: JSON.stringify({ system_prompt: systemPrompt, user_prompt: userPrompt }),
   }),
+  saveArticleDraft: (id) => request(`/articles/${encodeURIComponent(id)}/draft`, { method: 'POST' }),
+  publishArticle: (id) => request(`/articles/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
+  broadcastArticle: (id) => request(`/articles/${encodeURIComponent(id)}/broadcast`, { method: 'POST' }),
   republishArticle: (id) => request(`/articles/${encodeURIComponent(id)}/republish`, { method: 'POST' }),
   getProfile: () => request('/auth/profile'),
   updateProfile: (username) => request('/auth/profile', {
@@ -121,6 +124,7 @@ export const api = {
     if (params.tag) qs.set('tag', params.tag)
     if (params.page) qs.set('page', params.page)
     if (params.pageSize) qs.set('page_size', params.pageSize)
+    qs.set('sort_by', params.sortBy || 'time')
     return request(`/ai/articles?${qs.toString()}`)
   },
   getAiArticle: (id) => request(`/ai/articles/${encodeURIComponent(id)}`),
@@ -132,6 +136,7 @@ export const api = {
   aiEditAiArticle: (id, systemPrompt, userPrompt) => request(`/ai/articles/${encodeURIComponent(id)}/ai-edit`, {
     method: 'POST', body: JSON.stringify({ system_prompt: systemPrompt, user_prompt: userPrompt }),
   }),
+  saveAiArticleDraft: (id) => request(`/ai/articles/${encodeURIComponent(id)}/draft`, { method: 'POST' }),
   ingestAiArticles: () => request('/ai/ingest', { method: 'POST' }),
   publishAiArticle: (id) => request(`/ai/articles/${encodeURIComponent(id)}/publish`, { method: 'POST' }),
   getAiTags: () => request('/ai/tags'),
@@ -147,4 +152,13 @@ export const api = {
   updateAiSchedule: (sourceKey, enabled, intervalMinutes) => request(`/ai/schedules/${sourceKey}`, {
     method: 'PUT', body: JSON.stringify({ enabled, interval_minutes: intervalMinutes }),
   }),
+
+  // Workflow
+  getWorkflowStatus: () => request('/workflow/status'),
+  runWorkflowPushCheck: () => request('/workflow/push-check', { method: 'POST' }),
+  runWorkflowBroadcastCheck: () => request('/workflow/broadcast-check', { method: 'POST' }),
+  getBlocklist: () => request('/blocklist'),
+  createBlocklistRule: (data) => request('/blocklist', { method: 'POST', body: JSON.stringify(data) }),
+  updateBlocklistRule: (id, data) => request(`/blocklist/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBlocklistRule: (id) => request(`/blocklist/${id}`, { method: 'DELETE' }),
 };

@@ -78,7 +78,7 @@ class AiPipelineService:
         """Run AI scrapers, save new articles to files + DB.
 
         Args:
-            source: "all" or a specific source key (e.g. "bestblogs").
+            source: "all" or a specific source key.
 
         Returns summary: {source: {new: int, total: int}}.
         """
@@ -251,7 +251,8 @@ class AiPipelineService:
             f"SELECT COUNT(*) FROM articles WHERE {src_filter}", params
         ).fetchone()[0]
         published = conn.execute(
-            f"SELECT COUNT(*) FROM articles WHERE {src_filter} AND cms_id IS NOT NULL", params
+            f"SELECT COUNT(*) FROM articles WHERE {src_filter} AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')",
+            params,
         ).fetchone()[0]
 
         run_info = self.run_state.status()
@@ -330,6 +331,7 @@ class AiPipelineService:
         tag: str = None,
         page: int = 1,
         page_size: int = 20,
+        sort_by: str = "time",
     ) -> tuple[int, list[dict]]:
         """Query AI articles from DB with filters. Returns (total, articles)."""
         conn = self.database._get_conn()
@@ -357,7 +359,8 @@ class AiPipelineService:
         total = conn.execute(count_sql, params).fetchone()[0]
 
         offset = (page - 1) * page_size
-        query_sql = f"SELECT * FROM articles WHERE {where} ORDER BY created_at DESC, publish_time DESC LIMIT ? OFFSET ?"
+        order_by = ArticleDatabase._article_order_by(sort_by)
+        query_sql = f"SELECT * FROM articles WHERE {where} ORDER BY {order_by} LIMIT ? OFFSET ?"
         rows = conn.execute(query_sql, params + [page_size, offset]).fetchall()
         articles = [self.database._row_to_dict(row) for row in rows]
 
@@ -392,7 +395,8 @@ class AiPipelineService:
             f"SELECT COUNT(*) FROM articles WHERE {src_filter}", params
         ).fetchone()[0]
         published = conn.execute(
-            f"SELECT COUNT(*) FROM articles WHERE {src_filter} AND cms_id IS NOT NULL", params
+            f"SELECT COUNT(*) FROM articles WHERE {src_filter} AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')",
+            params,
         ).fetchone()[0]
 
         # By category

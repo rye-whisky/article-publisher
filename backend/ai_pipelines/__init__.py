@@ -10,7 +10,6 @@ import requests
 def create_ai_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> dict:
     """Create AI article scrapers. Returns {source_key: scraper}."""
     from .baoyu import BaoyuScraper
-    from .bestblogs import BestBlogsScraper
     from .claude import ClaudeScraper
     from .kr36 import Kr36Scraper
     from .qbitai import QbitaiScraper
@@ -18,15 +17,9 @@ def create_ai_scrapers(cfg: dict, session: requests.Session, base_dir: Path) -> 
     from .aibase import AibaseScraper
 
     scrapers = {}
-    ai_cfg = cfg.get("ai_sources", {})
-    paths_cfg = cfg.get("paths", {})
+    ai_cfg = cfg.get("ai_sources") or {}
+    paths_cfg = cfg.get("paths") or {}
     output_dir = base_dir / paths_cfg.get("ai_articles_output", "output/ai_articles")
-
-    # BestBlogs (disabled by default)
-    if ai_cfg.get("bestblogs", {}).get("enabled", False):
-        scrapers["bestblogs"] = BestBlogsScraper(
-            ai_cfg.get("bestblogs", {}), session, output_dir
-        )
 
     # 36氪 AI 资讯
     if ai_cfg.get("kr36", {}).get("enabled", True):

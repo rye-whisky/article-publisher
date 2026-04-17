@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router, database_router, ai_articles_router
+from routes import status_router, articles_router, pipeline_router, logs_router, scheduler_router, memory_router, database_router, ai_articles_router, workflow_router
 from routes.auth import router as auth_router, init_auth
 from routes.settings import router as settings_router, init_settings_routes
 from middleware.auth import AuthMiddleware
@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI):
     log.info("Restoring pipeline schedules...")
     svc.restore_schedules()
     ai_svc.restore_schedules()
+    if svc.push_scheduler:
+        svc.push_scheduler.start()
 
     # Set default schedules for sources without saved config (10-20 min)
     # Blockchain sources: 15 min default
@@ -78,14 +80,6 @@ async def lifespan(app: FastAPI):
             interval = 10 + (hash(src) % 11)  # 10-20 minutes pseudo-random
             log.info("Setting default schedule for %s: %d minutes (disabled, use UI to enable)", src, interval)
             db.save_schedule(src, False, interval)
-
-    # AI sources: 15 min default
-    for src in ["bestblogs"]:
-        existing = db.get_schedule(f"ai_{src}")
-        if existing is None:
-            interval = 15
-            log.info("Setting default schedule for ai_%s: %d minutes (disabled, use UI to enable)", src, interval)
-            db.save_schedule(f"ai_{src}", False, interval)
 
     broadcaster = get_broadcaster()
     if broadcaster:
@@ -130,6 +124,7 @@ app.include_router(auth_router)
 app.include_router(database_router)
 app.include_router(settings_router)
 app.include_router(ai_articles_router)
+app.include_router(workflow_router)
 
 # ---------------------------------------------------------------------------
 # Serve frontend static files (production)

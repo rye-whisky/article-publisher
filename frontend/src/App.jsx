@@ -23,9 +23,176 @@ const Icon = ({ name, size = 16 }) => {
     down: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
     image: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
     sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>,
+    shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
     send: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   }
   return icons[name] || null
+}
+
+const scoreBadgeStyle = (score) => {
+  if (score == null) return { background: 'var(--surface)', color: 'var(--text2)' }
+  if (score >= 90) return { background: '#10b981', color: '#fff' }
+  if (score >= 80) return { background: '#3b82f6', color: '#fff' }
+  if (score >= 70) return { background: '#f59e0b', color: '#fff' }
+  return { background: 'var(--surface)', color: 'var(--text2)' }
+}
+
+const reviewStatusMeta = (status) => {
+  switch (status) {
+    case 'auto_candidate':
+      return { label: '自动候选', className: 'badge-success' }
+    case 'manual_review':
+      return { label: '人工审核', className: 'badge-warning' }
+    case 'low_priority':
+      return { label: '低优先级', className: 'badge-default' }
+    case 'published':
+      return { label: '已发布', className: 'badge-info' }
+    default:
+      return { label: status || '未分类', className: 'badge-default' }
+  }
+}
+
+const publishStageMeta = (stage) => {
+  switch (stage) {
+    case 'draft':
+      return { label: '后台草稿', className: 'badge-warning' }
+    case 'published':
+      return { label: '已发布', className: 'badge-success' }
+    case 'broadcasted':
+      return { label: '全员推送', className: 'badge-danger' }
+    default:
+      return { label: '未入后台', className: 'badge-default' }
+  }
+}
+
+const isPublishedStage = (stage) => stage === 'published' || stage === 'broadcasted'
+
+const filterStatusMeta = (status) => {
+  switch (status) {
+    case 'passed':
+      return { label: '已通过', className: 'badge-success' }
+    case 'blocked':
+      return { label: '已屏蔽', className: 'badge-danger' }
+    default:
+      return { label: status || '未过滤', className: 'badge-default' }
+  }
+}
+
+const scoreStatusLabel = (status) => {
+  switch (status) {
+    case 'done':
+      return '已评分'
+    case 'failed':
+      return '评分失败'
+    case 'pending':
+      return '待评分'
+    default:
+      return status || '待评分'
+  }
+}
+
+const sourceBadgeClass = (sourceKey) => {
+  switch (sourceKey) {
+    case 'stcn':
+      return 'badge-info'
+    case 'blockbeats':
+      return 'badge-warning'
+    case 'chaincatcher':
+      return 'badge-danger'
+    case 'odaily':
+      return 'badge-primary'
+    default:
+      return 'badge-default'
+  }
+}
+
+const getTagList = (tags) => Array.isArray(tags) ? tags.filter(Boolean) : []
+
+const BLOCKCHAIN_SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily']
+const AUTO_PUBLISH_SOURCE_KEYS = ['techflow', 'blockbeats']
+const ARTICLE_SORT_OPTIONS = [
+  { key: 'time', labelKey: 'sortByTime' },
+  { key: 'score', labelKey: 'sortByScore' },
+]
+
+const buildWorkflowSettingsForm = (settingsData = {}) => ({
+  push_enabled: (settingsData.push_enabled ?? '1') !== '0',
+  push_auto_score: settingsData.push_auto_score || '85',
+  push_review_score: settingsData.push_review_score || '70',
+  push_window_hours: settingsData.push_window_hours || '2',
+  push_max_per_window: settingsData.push_max_per_window || '1',
+  push_check_interval_minutes: settingsData.push_check_interval_minutes || '10',
+  push_auto_sources: (() => {
+    try {
+      return JSON.parse(settingsData.push_auto_sources || '["techflow","blockbeats"]')
+    } catch {
+      return (settingsData.push_auto_sources || 'techflow,blockbeats').split(',').map(v => v.trim()).filter(Boolean)
+    }
+  })(),
+  broadcast_enabled: (settingsData.broadcast_enabled ?? '0') === '1',
+  broadcast_grace_minutes: settingsData.broadcast_grace_minutes || '15',
+  broadcast_check_interval_minutes: settingsData.broadcast_check_interval_minutes || '15',
+})
+
+const workflowSettingsToPayload = (form) => ({
+  push_enabled: form.push_enabled ? '1' : '0',
+  push_auto_score: String(form.push_auto_score || '85'),
+  push_review_score: String(form.push_review_score || '70'),
+  push_window_hours: String(form.push_window_hours || '2'),
+  push_max_per_window: String(form.push_max_per_window || '1'),
+  push_check_interval_minutes: String(form.push_check_interval_minutes || '10'),
+  push_auto_sources: JSON.stringify(form.push_auto_sources || []),
+  broadcast_enabled: form.broadcast_enabled ? '1' : '0',
+  broadcast_grace_minutes: String(form.broadcast_grace_minutes || '15'),
+  broadcast_check_interval_minutes: String(form.broadcast_check_interval_minutes || '15'),
+})
+
+const parseKeywordLibraryInput = (value) => {
+  const seen = new Set()
+  return String(value || '')
+    .split(/[\n,，]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const normalized = item.toLowerCase()
+      if (seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
+}
+
+const isQuickKeywordRule = (rule) => (
+  !rule?.source_key
+  && (rule?.field || 'title') === 'title'
+  && (rule?.action || 'block') === 'block'
+  && (rule?.match_type || 'keyword') === 'keyword'
+)
+
+const quickKeywordTextFromRules = (rules) => (
+  (rules || [])
+    .filter(isQuickKeywordRule)
+    .map(rule => (rule.pattern || '').trim())
+    .filter(Boolean)
+    .join(',')
+)
+
+function ArticleSortControls({ sortBy, onChange }) {
+  const { t } = useLanguage()
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 13, color: 'var(--text2)' }}>{t('sortBy')}</span>
+      {ARTICLE_SORT_OPTIONS.map(option => (
+        <button
+          key={option.key}
+          className={`btn btn-sm ${sortBy === option.key ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => onChange(option.key)}
+        >
+          {t(option.labelKey)}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +310,19 @@ function DashboardPage() {
   const [running, setRunning] = useState(false)
   const [schedules, setSchedules] = useState({})
   const [scheduleIntervals, setScheduleIntervals] = useState({})
+  const [workflowForm, setWorkflowForm] = useState(buildWorkflowSettingsForm())
+  const [workflowDirty, setWorkflowDirty] = useState(false)
+  const [workflowSaving, setWorkflowSaving] = useState(false)
+  const [workflowChecking, setWorkflowChecking] = useState(false)
+  const workflowDirtyRef = useRef(false)
 
-  const SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily', 'bestblogs']
+  useEffect(() => {
+    workflowDirtyRef.current = workflowDirty
+  }, [workflowDirty])
 
   const fetchStatus = useCallback(async () => {
     try {
-      const [data, schedData] = await Promise.all([api.getStatus(), api.getSchedules()])
+      const [data, schedData, settingsData] = await Promise.all([api.getStatus(), api.getSchedules(), api.getSettings()])
       setStatus(data)
       setRunning(data.running)
       setSchedules(schedData.schedules || {})
@@ -159,6 +333,9 @@ function DashboardPage() {
         }
         return next
       })
+      if (!workflowDirtyRef.current) {
+        setWorkflowForm(buildWorkflowSettingsForm(settingsData))
+      }
     } catch (e) {
       console.error(e)
     } finally {
@@ -219,9 +396,75 @@ function DashboardPage() {
     }
   }
 
+  const handleWorkflowFieldChange = (field, value) => {
+    setWorkflowDirty(true)
+    setWorkflowForm(prev => ({ ...prev, [field]: value }))
+  }
+
+  const handleDashboardToggleAutoSource = (sourceKey) => {
+    setWorkflowDirty(true)
+    setWorkflowForm(prev => {
+      const current = new Set(prev.push_auto_sources || [])
+      if (current.has(sourceKey)) current.delete(sourceKey)
+      else current.add(sourceKey)
+      return { ...prev, push_auto_sources: Array.from(current) }
+    })
+  }
+
+  const handleSaveWorkflowSettings = async () => {
+    setWorkflowSaving(true)
+    try {
+      await api.updateSettings(workflowSettingsToPayload(workflowForm))
+      setWorkflowDirty(false)
+      await fetchStatus()
+      alert('自动发布设置已保存，下一次运行会直接生效，无需重启服务器。')
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setWorkflowSaving(false)
+    }
+  }
+
+  const handleRunWorkflowPushCheck = async () => {
+    setWorkflowChecking(true)
+    try {
+      const result = await api.runWorkflowPushCheck()
+      if (result.reason === 'published') {
+        alert(`已自动发布：${result.article_id} (CMS ${result.cms_id})`)
+      } else {
+        alert(`检查完成：${result.reason}`)
+      }
+      await fetchStatus()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setWorkflowChecking(false)
+    }
+  }
+
+  const [broadcastChecking, setBroadcastChecking] = useState(false)
+
+  const handleRunWorkflowBroadcastCheck = async () => {
+    setBroadcastChecking(true)
+    try {
+      const result = await api.runWorkflowBroadcastCheck()
+      if (result.reason === 'broadcasted') {
+        alert(`已推送：${result.article_id} (CMS ${result.cms_id})`)
+      } else {
+        alert(`检查完成：${result.reason}`)
+      }
+      await fetchStatus()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setBroadcastChecking(false)
+    }
+  }
+
   if (loading) return <div className="empty">{t('loading')}</div>
 
   const lastResult = status?.last_result
+  const workflow = status?.workflow || { metrics: {}, scheduler: {}, broadcast: {} }
 
   return (
     <div>
@@ -245,6 +488,14 @@ function DashboardPage() {
         <div className="stat">
           <div className="label">{t('lastRun')}</div>
           <div className="value" style={{ fontSize: 13, color: 'var(--text2)' }}>{status?.last_updated || t('notAvailable')}</div>
+        </div>
+        <div className="stat">
+          <div className="label">自动候选池</div>
+          <div className="value" style={{ color: 'var(--success)' }}>{workflow.metrics?.auto_candidates ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="label">人工审核池</div>
+          <div className="value">{workflow.metrics?.manual_review ?? 0}</div>
         </div>
       </div>
 
@@ -277,15 +528,227 @@ function DashboardPage() {
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('odaily')}>
             <Icon name="play" /> {t('odailyOnly')}
           </button>
-          <button className="btn btn-outline" disabled={running} onClick={() => handleRun('bestblogs')}>
-            <Icon name="play" /> {t('bestBlogsOnly')}
-          </button>
           <button className="btn btn-outline" disabled={running} onClick={() => handleRun('all', true)}>
             <Icon name="refresh" /> {t('dryRun')}
           </button>
         </div>
         ) : (
           <div style={{ color: 'var(--text2)', fontSize: 13, padding: '8px 0' }}>{t('guestModeHint')}</div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2>自动发布窗口</h2>
+          {!isGuest && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-outline btn-sm" onClick={handleRunWorkflowPushCheck} disabled={workflowChecking}>
+                {workflowChecking ? '检查中...' : '立即检查发布'}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveWorkflowSettings} disabled={workflowSaving}>
+                {workflowSaving ? '保存中...' : '保存设置'}
+              </button>
+            </div>
+          )}
+        </div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 16 }}>
+          保存后下次抓取、评分和自动发布会立即读取新设置，不需要重启服务器。
+        </p>
+        <div className="workflow-grid">
+          <div className="settings-group">
+            <label>自动发布</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.enabled ? '已开启' : '已关闭'}</div>
+            ) : (
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={workflowForm.push_enabled}
+                  onChange={e => handleWorkflowFieldChange('push_enabled', e.target.checked)}
+                />
+                <span>{workflowForm.push_enabled ? '已开启' : '已关闭'}</span>
+              </label>
+            )}
+          </div>
+          <div className="settings-group">
+            <label>窗口时长</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.window_hours ?? 2} 小时</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="24"
+                step="1"
+                value={workflowForm.push_window_hours}
+                onChange={e => handleWorkflowFieldChange('push_window_hours', e.target.value)}
+              />
+            )}
+          </div>
+          <div className="settings-group">
+            <label>自动阈值</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.auto_score ?? 85}</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={workflowForm.push_auto_score}
+                onChange={e => handleWorkflowFieldChange('push_auto_score', e.target.value)}
+              />
+            )}
+          </div>
+          <div className="settings-group">
+            <label>人工审核阈值</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.review_score ?? 70}</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={workflowForm.push_review_score}
+                onChange={e => handleWorkflowFieldChange('push_review_score', e.target.value)}
+              />
+            )}
+          </div>
+          <div className="settings-group">
+            <label>每窗口最多发布</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.max_per_window ?? 1} 篇</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="5"
+                value={workflowForm.push_max_per_window}
+                onChange={e => handleWorkflowFieldChange('push_max_per_window', e.target.value)}
+              />
+            )}
+          </div>
+          <div className="settings-group">
+            <label>检查间隔</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.scheduler?.check_interval_minutes ?? 10} 分钟</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="60"
+                value={workflowForm.push_check_interval_minutes}
+                onChange={e => handleWorkflowFieldChange('push_check_interval_minutes', e.target.value)}
+              />
+            )}
+          </div>
+        </div>
+        <div className="settings-group" style={{ marginTop: 16, marginBottom: 12 }}>
+          <label>自动发布信源</label>
+          <div className="workflow-chip-row">
+            {AUTO_PUBLISH_SOURCE_KEYS.map(sourceKey => {
+              const active = (isGuest ? (workflow.scheduler?.auto_sources || []) : (workflowForm.push_auto_sources || [])).includes(sourceKey)
+              return isGuest ? (
+                <span key={sourceKey} className={`workflow-chip ${active ? 'active' : ''}`}>{sourceKey}</span>
+              ) : (
+                <button
+                  key={sourceKey}
+                  type="button"
+                  className={`workflow-chip ${active ? 'active' : ''}`}
+                  onClick={() => handleDashboardToggleAutoSource(sourceKey)}
+                >
+                  {sourceKey}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        {workflow.scheduler?.history?.length > 0 && (
+          <div className="workflow-history">
+            <strong>最近自动发布</strong>
+            {workflow.scheduler.history.map(item => (
+              <div key={item.id} className="workflow-history-item">
+                <span>{item.article_id}</span>
+                <span>{item.score ?? '--'}</span>
+                <span>{item.pushed_at ? new Date(item.pushed_at).toLocaleString() : '--'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2>App 桌面推送</h2>
+          {!isGuest && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-outline btn-sm" onClick={handleRunWorkflowBroadcastCheck} disabled={broadcastChecking}>
+                {broadcastChecking ? '检查中...' : '立即检查推送'}
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={handleSaveWorkflowSettings} disabled={workflowSaving}>
+                {workflowSaving ? '保存中...' : '保存设置'}
+              </button>
+            </div>
+          )}
+        </div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 16 }}>
+          将已公开发布的文章推送到 App 桌面通知。默认关闭，需手动开启。推送后文章状态变为"全员推送"。
+        </p>
+        <div className="workflow-grid">
+          <div className="settings-group">
+            <label>自动推送</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.broadcast?.enabled ? '已开启' : '已关闭'}</div>
+            ) : (
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={workflowForm.broadcast_enabled}
+                  onChange={e => handleWorkflowFieldChange('broadcast_enabled', e.target.checked)}
+                />
+                <span>{workflowForm.broadcast_enabled ? '已开启' : '已关闭'}</span>
+              </label>
+            )}
+          </div>
+          <div className="settings-group">
+            <label>缓冲时间</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.broadcast?.grace_minutes ?? 15} 分钟</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="120"
+                value={workflowForm.broadcast_grace_minutes}
+                onChange={e => handleWorkflowFieldChange('broadcast_grace_minutes', e.target.value)}
+              />
+            )}
+          </div>
+          <div className="settings-group">
+            <label>检查间隔</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.broadcast?.check_interval_minutes ?? 15} 分钟</div>
+            ) : (
+              <input
+                type="number"
+                min="1"
+                max="60"
+                value={workflowForm.broadcast_check_interval_minutes}
+                onChange={e => handleWorkflowFieldChange('broadcast_check_interval_minutes', e.target.value)}
+              />
+            )}
+          </div>
+        </div>
+        {workflow.broadcast?.history?.length > 0 && (
+          <div className="workflow-history">
+            <strong>最近推送记录</strong>
+            {workflow.broadcast.history.map(item => (
+              <div key={item.id} className="workflow-history-item">
+                <span>{item.article_id}</span>
+                <span>{item.push_title?.slice(0, 30) || '--'}</span>
+                <span>{item.pushed_at ? new Date(item.pushed_at).toLocaleString() : '--'}</span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -304,7 +767,7 @@ function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {SOURCE_KEYS.map(key => {
+              {BLOCKCHAIN_SOURCE_KEYS.map(key => {
                 const sched = schedules[key] || { enabled: false, interval_minutes: 60, next_run_time: null }
                 const srcName = t(`sourceName_${key}`) || key
                 return (
@@ -378,12 +841,12 @@ function DashboardPage() {
           <div className="card-header"><h2>{t('lastRunResult')}</h2></div>
           <div className="stats" style={{ marginBottom: 0 }}>
             <div className="stat">
-              <div className="label">{t('published')}</div>
-              <div className="value" style={{ color: 'var(--success)' }}>{lastResult.published?.length ?? 0}</div>
+              <div className="label">本次入库</div>
+              <div className="value" style={{ color: 'var(--success)' }}>{lastResult.ingested ?? lastResult.refetched?.length ?? 0}</div>
             </div>
             <div className="stat">
-              <div className="label">{t('skipped')}</div>
-              <div className="value" style={{ color: 'var(--text2)' }}>{lastResult.skipped?.length ?? 0}</div>
+              <div className="label">{t('published')}</div>
+              <div className="value" style={{ color: 'var(--info)' }}>{lastResult.published?.length ?? 0}</div>
             </div>
             <div className="stat">
               <div className="label">{t('failed')}</div>
@@ -460,7 +923,7 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
     }
   }
 
-  const handleSaveAndPush = async () => {
+  const handleSaveAndSubmit = async (mode) => {
     if (!isEdit) return
     setSaving(true)
     try {
@@ -468,10 +931,19 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
       const data = { title, cover_src: coverSrc, abstract, blocks, source_key: sourceKey }
       if (isAiArticle) await api.updateAiArticle(article.article_id, data)
       else await api.updateArticle(article.article_id, data)
-      const result = isAiArticle
-        ? await api.publishAiArticle(article.article_id)
-        : await api.republishArticle(article.article_id)
-      alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
+
+      const result = mode === 'draft'
+        ? (isAiArticle
+          ? await api.saveAiArticleDraft(article.article_id)
+          : await api.saveArticleDraft(article.article_id))
+        : (isAiArticle
+          ? await api.publishAiArticle(article.article_id)
+          : await api.publishArticle(article.article_id))
+
+      alert(
+        (mode === 'draft' ? t('saveToBackendSuccess') : t('publishSuccess')) +
+        ` (CMS ID: ${result.cms_id})`
+      )
       onSave()
     } catch (e) {
       alert(e.message)
@@ -544,7 +1016,6 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
           <button className={sourceKey === 'blockbeats' ? 'active' : ''} onClick={() => setSourceKey('blockbeats')}>BlockBeats</button>
           <button className={sourceKey === 'chaincatcher' ? 'active' : ''} onClick={() => setSourceKey('chaincatcher')}>ChainCatcher</button>
           <button className={sourceKey === 'odaily' ? 'active' : ''} onClick={() => setSourceKey('odaily')}>Odaily</button>
-          <button className={sourceKey === 'bestblogs' ? 'active' : ''} onClick={() => setSourceKey('bestblogs')}>BestBlogs</button>
         </div>
       )}
 
@@ -581,9 +1052,14 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
               {saving ? t('saving') : t('save')}
             </button>
             {isEdit && (
-              <button className="btn btn-outline" onClick={handleSaveAndPush} disabled={saving || !title.trim()}>
-                <Icon name="send" size={14} /> {saving ? t('saving') : t('saveAndPush')}
-              </button>
+              <>
+                <button className="btn btn-outline" onClick={() => handleSaveAndSubmit('draft')} disabled={saving || !title.trim()}>
+                  <Icon name="send" size={14} /> {saving ? t('saving') : t('saveToBackend')}
+                </button>
+                <button className="btn btn-outline" onClick={() => handleSaveAndSubmit('publish')} disabled={saving || !title.trim()}>
+                  <Icon name="send" size={14} /> {saving ? t('saving') : t('saveAndPublish')}
+                </button>
+              </>
             )}
             <button className="btn btn-outline" onClick={onCancel}>{t('cancel')}</button>
             {isEdit && (
@@ -647,6 +1123,7 @@ function ArticlesPage() {
   const { t } = useLanguage()
   const isGuest = getRole() === 'guest'
   const [source, setSource] = useState('all')
+  const [sortBy, setSortBy] = useState('time')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [articles, setArticles] = useState([])
@@ -663,7 +1140,7 @@ function ArticlesPage() {
   const fetchArticles = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.getArticles(source, page, PAGE_SIZE)
+      const data = await api.getArticles(source, page, PAGE_SIZE, sortBy)
       setTotal(data.total || 0)
       setArticles(data.articles || [])
     } catch (e) {
@@ -671,9 +1148,9 @@ function ArticlesPage() {
     } finally {
       setLoading(false)
     }
-  }, [source, page])
+  }, [source, page, sortBy])
 
-  useEffect(() => { setPage(1) }, [source])
+  useEffect(() => { setPage(1) }, [source, sortBy])
   useEffect(() => { fetchArticles() }, [fetchArticles])
 
   const handleSourceChange = (s) => {
@@ -713,6 +1190,43 @@ function ArticlesPage() {
     }
   }
 
+  const refreshSelectedArticle = async (articleId) => {
+    const data = await api.getArticle(articleId)
+    setDetailArticle(data)
+    await fetchArticles()
+    return data
+  }
+
+  const handleSaveToBackend = async (articleId) => {
+    try {
+      const result = await api.saveArticleDraft(articleId)
+      alert(t('saveToBackendSuccess') + ` (CMS ID: ${result.cms_id})`)
+      await refreshSelectedArticle(articleId)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handlePublish = async (articleId) => {
+    try {
+      const result = await api.publishArticle(articleId)
+      alert(t('publishSuccess') + ` (CMS ID: ${result.cms_id})`)
+      await refreshSelectedArticle(articleId)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleBroadcast = async (articleId) => {
+    try {
+      const result = await api.broadcastArticle(articleId)
+      alert(t('broadcastSuccess'))
+      await refreshSelectedArticle(articleId)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
   // Editor mode
   if (editor === 'new') {
     return <ArticleEditor onSave={handleEditorSave} onCancel={() => setEditor(null)} />
@@ -726,6 +1240,11 @@ function ArticlesPage() {
     if (detailLoading) return <div className="empty">{t('loading')}</div>
     const a = detailArticle
     if (!a) return null
+    const tags = getTagList(a.tags)
+    const reviewMeta = reviewStatusMeta(a.review_status)
+    const filterMeta = filterStatusMeta(a.filter_status)
+    const publishMeta = publishStageMeta(a.publish_stage)
+    const published = isPublishedStage(a.publish_stage)
     return (
       <div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -736,15 +1255,20 @@ function ArticlesPage() {
           <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
             <Icon name="edit" size={14} /> {t('editArticle')}
           </button>
-          {a.published && (
-            <button className="btn btn-outline btn-sm" onClick={async () => {
-              if (!confirm(t('republishConfirm'))) return
-              try {
-                const result = await api.republishArticle(a.article_id)
-                alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
-              } catch (e) { alert(e.message) }
+          {!published && (
+            <button className="btn btn-outline btn-sm" onClick={() => handleSaveToBackend(a.article_id)}>
+              <Icon name="send" size={14} /> {a.publish_stage === 'draft' ? t('updateDraft') : t('saveToBackend')}
+            </button>
+          )}
+          <button className={`btn btn-sm ${published ? 'btn-outline' : 'btn-primary'}`} onClick={() => handlePublish(a.article_id)}>
+            <Icon name="send" size={14} /> {published ? t('updatePublished') : t('publishNow')}
+          </button>
+          {a.publish_stage === 'published' && a.cms_id && !a.broadcasted_at && (
+            <button className="btn btn-sm btn-warning" style={{ background: '#f59e0b', color: '#fff', border: 'none' }} onClick={() => {
+              if (!confirm(t('confirmBroadcast'))) return
+              handleBroadcast(a.article_id)
             }}>
-              <Icon name="send" size={14} /> {t('republish')}
+              <Icon name="send" size={14} /> {t('broadcastToApp')}
             </button>
           )}
           <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white', border: 'none' }} onClick={async () => {
@@ -757,6 +1281,21 @@ function ArticlesPage() {
         </div>
         <div className="card">
           <div className="article-detail">
+            <div className="detail-badges">
+              {a.score != null ? (
+                <span style={{ ...scoreBadgeStyle(a.score), padding: '2px 10px', borderRadius: 12, fontSize: 13, fontWeight: 700 }}>
+                  {a.score}
+                </span>
+              ) : (
+                <span className="badge badge-default">{scoreStatusLabel(a.score_status)}</span>
+              )}
+              {a.review_status && <span className={`badge ${reviewMeta.className}`}>{reviewMeta.label}</span>}
+              {a.filter_status && a.filter_status !== 'passed' && (
+                <span className={`badge ${filterMeta.className}`}>{filterMeta.label}</span>
+              )}
+              {a.auto_publish_enabled && <span className="badge badge-info">自动发布</span>}
+              <span className={`badge ${publishMeta.className}`}>{publishMeta.label}</span>
+            </div>
             <h1>{a.title}</h1>
             <div className="article-meta">
               <span>{a.source}</span>
@@ -766,7 +1305,41 @@ function ArticlesPage() {
                 {t('original')}
               </a>
             </div>
-            {a.published ? <span className="badge badge-success">{t('published')}</span> : <span className="badge badge-default">{t('draft')}</span>}
+            {tags.length > 0 && (
+              <div className="detail-tag-row">
+                {tags.map((tag, index) => (
+                  <span key={`${tag}-${index}`} className="workflow-chip">{tag}</span>
+                ))}
+              </div>
+            )}
+            {(a.score_reason || a.filter_reason || a.published_strategy || a.cms_id) && (
+              <div className="detail-panels">
+                {a.score_reason && (
+                  <div className="detail-panel">
+                    <strong>评分理由</strong>
+                    <p>{a.score_reason}</p>
+                  </div>
+                )}
+                {a.filter_reason && (
+                  <div className="detail-panel">
+                    <strong>过滤说明</strong>
+                    <p>{a.filter_reason}</p>
+                  </div>
+                )}
+                {a.published_strategy && (
+                  <div className="detail-panel">
+                    <strong>发布策略</strong>
+                    <p>{a.published_strategy}</p>
+                  </div>
+                )}
+                {a.cms_id && (
+                  <div className="detail-panel">
+                    <strong>CMS ID</strong>
+                    <p>{a.cms_id}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <div className="article-body">
@@ -827,51 +1400,95 @@ function ArticlesPage() {
             <Icon name="plus" size={14} /> {t('createArticle')}
           </button>
           )}
-          {['all', 'stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily', 'bestblogs'].map(s => (
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+          {['all', ...BLOCKCHAIN_SOURCE_KEYS].map(s => (
             <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(s)}>
               {s.toUpperCase()}
             </button>
           ))}
         </div>
+        <ArticleSortControls sortBy={sortBy} onChange={setSortBy} />
       </div>
 
       {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{t('noArticlesFound')}</div> : (
         <>
           <div className="article-grid">
-            {articles.map(a => (
-              <div key={a.article_id}
-                className={`article-card ${selectMode && selectedIds.has(a.article_id) ? 'selected' : ''}`}
-                style={{ position: 'relative' }}
-                onClick={() => selectMode ? toggleSelect(a.article_id) : handleSelectArticle(a.article_id)}>
-                {selectMode && (
-                  <div className={`card-checkbox ${selectedIds.has(a.article_id) ? 'checked' : ''}`}
-                    onClick={e => { e.stopPropagation(); toggleSelect(a.article_id) }} />
-                )}
-                {!isGuest && !selectMode && (
-                <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); handleEditorOpen(a.article_id) }}>
-                  <Icon name="edit" size={14} />
-                </button>
-                )}
-                {a.cover_image ? (
+            {articles.map(a => {
+              const reviewMeta = reviewStatusMeta(a.review_status)
+              const filterMeta = filterStatusMeta(a.filter_status)
+              const publishMeta = publishStageMeta(a.publish_stage)
+              const tags = getTagList(a.tags).slice(0, 3)
+              const cardClassName = [
+                'article-card',
+                selectMode && selectedIds.has(a.article_id) ? 'selected' : '',
+                a.filter_status && a.filter_status !== 'passed' ? 'article-card-muted' : '',
+              ].filter(Boolean).join(' ')
+
+              return (
+                <div key={a.article_id}
+                  className={cardClassName}
+                  style={{ position: 'relative' }}
+                  onClick={() => selectMode ? toggleSelect(a.article_id) : handleSelectArticle(a.article_id)}>
+                  {selectMode && (
+                    <div className={`card-checkbox ${selectedIds.has(a.article_id) ? 'checked' : ''}`}
+                      onClick={e => { e.stopPropagation(); toggleSelect(a.article_id) }} />
+                  )}
+                  {!isGuest && !selectMode && (
+                  <button className="card-action-btn" title={t('editArticle')} onClick={e => { e.stopPropagation(); handleEditorOpen(a.article_id) }}>
+                    <Icon name="edit" size={14} />
+                  </button>
+                  )}
+                  {a.cover_image ? (
                   <img className="card-cover" src={a.cover_image} alt={a.title} referrerPolicy="no-referrer" />
                 ) : (
                   <div className="card-cover-placeholder">
-                    {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : a.source_key === 'odaily' ? 'OD' : a.source_key === 'bestblogs' ? 'BB*' : 'TF'}
+                      {a.source_key === 'stcn' ? 'STCN' : a.source_key === 'blockbeats' ? 'BB' : a.source_key === 'chaincatcher' ? 'CC' : a.source_key === 'odaily' ? 'OD' : 'TF'}
                   </div>
                 )}
-                <div className="card-body">
-                  <h3>{a.title}</h3>
-                  {a.abstract && <p className="card-abstract">{a.abstract}</p>}
+                  <div className="card-body">
+                    <div className="article-card-topline">
+                      {a.score != null ? (
+                        <span style={{ ...scoreBadgeStyle(a.score), padding: '1px 8px', borderRadius: 10, fontSize: 12, fontWeight: 700 }}>
+                          {a.score}
+                        </span>
+                      ) : (
+                        <span className="badge badge-default">{scoreStatusLabel(a.score_status)}</span>
+                      )}
+                      {a.review_status && <span className={`badge ${reviewMeta.className}`}>{reviewMeta.label}</span>}
+                      {a.filter_status && a.filter_status !== 'passed' && (
+                        <span className={`badge ${filterMeta.className}`}>{filterMeta.label}</span>
+                      )}
+                      {a.published_strategy === 'auto' && <span className="badge badge-info">自动发布</span>}
+                    </div>
+                    <h3>{a.title}</h3>
+                    {a.abstract && <p className="card-abstract">{a.abstract}</p>}
+                    {a.filter_reason ? (
+                      <div className="card-note card-note-danger">{a.filter_reason}</div>
+                    ) : a.score_reason ? (
+                      <div className="card-note">{a.score_reason}</div>
+                    ) : null}
+                    {tags.length > 0 && (
+                      <div className="detail-tag-row">
+                        {tags.map((tag, index) => (
+                          <span key={`${tag}-${index}`} className="workflow-chip">{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                    <div className="card-meta">
+                      <span>
+                        <span className={`badge ${sourceBadgeClass(a.source_key)}`} style={{ marginRight: 6 }}>{a.source_key}</span>
+                        <span className={`badge ${publishMeta.className}`}>{publishMeta.label}</span>
+                      </span>
+                    <span>{a.publish_time || ''}</span>
+                  </div>
                 </div>
-                <div className="card-meta">
-                  <span>
-                    <span className={`badge ${a.source_key === 'stcn' ? 'badge-info' : a.source_key === 'blockbeats' ? 'badge-warning' : a.source_key === 'chaincatcher' ? 'badge-danger' : a.source_key === 'odaily' ? 'badge-primary' : a.source_key === 'bestblogs' ? 'badge-success' : 'badge-warning'}`} style={{ marginRight: 6 }}>{a.source_key}</span>
-                    {a.published ? <span className="badge badge-success">{t('published')}</span> : <span className="badge badge-default">{t('draft')}</span>}
-                  </span>
-                  <span>{a.publish_time || ''}</span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
           {totalPages > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20 }}>
@@ -979,21 +1596,45 @@ function PromptPage() {
   const isGuest = getRole() === 'guest'
   const [abstractPrompt, setAbstractPrompt] = useState('')
   const [editPrompt, setEditPrompt] = useState('')
+  const [scorePrompt, setScorePrompt] = useState('')
+  const [workflow, setWorkflow] = useState({ metrics: {}, scheduler: { history: [], auto_sources: [] }, broadcast: {} })
+  const [settingsForm, setSettingsForm] = useState(buildWorkflowSettingsForm())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    api.getSettings().then(data => {
-      setAbstractPrompt(data.prompt_abstract || '')
-      setEditPrompt(data.prompt_edit || '')
-    }).catch(console.error).finally(() => setLoading(false))
+  const refreshWorkflow = useCallback(async () => {
+    try {
+      const [settingsData, workflowData] = await Promise.all([
+        api.getSettings(),
+        api.getWorkflowStatus(),
+      ])
+      setAbstractPrompt(settingsData.prompt_abstract || '')
+      setEditPrompt(settingsData.prompt_edit || '')
+      setScorePrompt(settingsData.prompt_score || '')
+      setSettingsForm(buildWorkflowSettingsForm(settingsData))
+      setWorkflow(workflowData || { metrics: {}, scheduler: { history: [] }, broadcast: {} })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    refreshWorkflow()
+  }, [refreshWorkflow])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      await api.updateSettings({ prompt_abstract: abstractPrompt, prompt_edit: editPrompt })
-      alert(t('saveSuccess'))
+      await api.updateSettings({
+        prompt_abstract: abstractPrompt,
+        prompt_edit: editPrompt,
+        prompt_score: scorePrompt,
+        ...workflowSettingsToPayload(settingsForm),
+      })
+      alert('保存成功，下一次运行会直接读取新的 Prompt 和自动发布设置，无需重启服务器。')
+      await refreshWorkflow()
     } catch (e) {
       alert(e.message)
     } finally {
@@ -1001,45 +1642,556 @@ function PromptPage() {
     }
   }
 
+  const handleRunPushCheck = async () => {
+    try {
+      const result = await api.runWorkflowPushCheck()
+      if (result.reason === 'published') {
+        alert(`已自动发布：${result.article_id} (CMS ${result.cms_id})`)
+      } else {
+        alert(`检查完成：${result.reason}`)
+      }
+      refreshWorkflow()
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleToggleAutoSource = (sourceKey) => {
+    setSettingsForm(prev => {
+      const current = new Set(prev.push_auto_sources || [])
+      if (current.has(sourceKey)) current.delete(sourceKey)
+      else current.add(sourceKey)
+      return { ...prev, push_auto_sources: Array.from(current) }
+    })
+  }
+
   if (loading) return <div className="empty">{t('loading')}</div>
 
   return (
-    <div className="settings-page">
-      <h1>{t('promptManage')}</h1>
+    <div className="settings-page workflow-page">
+      <h1>工作流中心</h1>
+      <p className="workflow-subtitle">
+        统一管理抓取过滤、评分 Prompt、自动发布窗口和最近发布记录。
+      </p>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-header"><h2>{t('promptAbstract')}</h2></div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
-          {t('promptAbstractDesc')}
-        </p>
-        <textarea
-          value={abstractPrompt}
-          onChange={e => setAbstractPrompt(e.target.value)}
-          rows={6}
-          placeholder={t('promptAbstract')}
-          style={{ width: '100%', padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
-        />
+      <div className="stats">
+        <div className="stat">
+          <div className="label">待自动发布</div>
+          <div className="value">{workflow.metrics?.auto_candidates ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="label">待人工审核</div>
+          <div className="value">{workflow.metrics?.manual_review ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="label">低优先级</div>
+          <div className="value">{workflow.metrics?.low_priority ?? 0}</div>
+        </div>
+        <div className="stat">
+          <div className="label">已发布</div>
+          <div className="value">{workflow.metrics?.published_articles ?? 0}</div>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-header"><h2>{t('promptEdit')}</h2></div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
-          {t('promptEditDesc')}
+        <div className="card-header">
+          <h2>自动发布设置</h2>
+          {!isGuest && (
+            <button className="btn btn-outline btn-sm" onClick={handleRunPushCheck}>
+              立即检查发布
+            </button>
+          )}
+        </div>
+        <div className="workflow-grid">
+          <div className="settings-group">
+            <label>启用自动发布</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.push_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, push_enabled: e.target.checked }))}
+                disabled={isGuest}
+              />
+              <span>{settingsForm.push_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>自动发布阈值</label>
+            <input
+              type="number"
+              value={settingsForm.push_auto_score}
+              min="1"
+              max="100"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, push_auto_score: e.target.value }))}
+            />
+          </div>
+          <div className="settings-group">
+            <label>人工审核阈值</label>
+            <input
+              type="number"
+              value={settingsForm.push_review_score}
+              min="1"
+              max="100"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, push_review_score: e.target.value }))}
+            />
+          </div>
+          <div className="settings-group">
+            <label>窗口时长（小时）</label>
+            <input
+              type="number"
+              value={settingsForm.push_window_hours}
+              min="1"
+              max="24"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, push_window_hours: e.target.value }))}
+            />
+          </div>
+          <div className="settings-group">
+            <label>每窗口最多发布</label>
+            <input
+              type="number"
+              value={settingsForm.push_max_per_window}
+              min="1"
+              max="5"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, push_max_per_window: e.target.value }))}
+            />
+          </div>
+          <div className="settings-group">
+            <label>调度检查间隔（分钟）</label>
+            <input
+              type="number"
+              value={settingsForm.push_check_interval_minutes}
+              min="1"
+              max="60"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, push_check_interval_minutes: e.target.value }))}
+            />
+          </div>
+        </div>
+        <div className="settings-group">
+          <label>自动发布信源</label>
+          <div className="workflow-chip-row">
+            {AUTO_PUBLISH_SOURCE_KEYS.map(sourceKey => (
+              <button
+                key={sourceKey}
+                type="button"
+                className={`workflow-chip ${(settingsForm.push_auto_sources || []).includes(sourceKey) ? 'active' : ''}`}
+                onClick={() => handleToggleAutoSource(sourceKey)}
+                disabled={isGuest}
+              >
+                {sourceKey}
+              </button>
+            ))}
+          </div>
+        </div>
+        {workflow.scheduler?.history?.length > 0 && (
+          <div className="workflow-history">
+            <strong>最近自动发布</strong>
+            {workflow.scheduler.history.map(item => (
+              <div key={item.id} className="workflow-history-item">
+                <span>{item.article_id}</span>
+                <span>{item.score ?? '--'}</span>
+                <span>{item.pushed_at ? new Date(item.pushed_at).toLocaleString() : '--'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">
+          <h2>App 桌面推送设置</h2>
+          {!isGuest && (
+            <button className="btn btn-outline btn-sm" onClick={async () => {
+              try {
+                const result = await api.runWorkflowBroadcastCheck()
+                if (result.reason === 'broadcasted') {
+                  alert(`已推送：${result.article_id} (CMS ${result.cms_id})`)
+                } else {
+                  alert(`检查完成：${result.reason}`)
+                }
+                await refreshWorkflow()
+              } catch (e) { alert(e.message) }
+            }}>
+              立即检查推送
+            </button>
+          )}
+        </div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 16 }}>
+          将已公开发布的文章推送到 App 桌面通知。默认关闭。推送后状态变为"全员推送"，不可撤销。
         </p>
-        <textarea
-          value={editPrompt}
-          onChange={e => setEditPrompt(e.target.value)}
-          rows={8}
-          placeholder={t('promptEdit')}
-          style={{ width: '100%', padding: '10px 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
-        />
+        <div className="workflow-grid">
+          <div className="settings-group">
+            <label>启用自动推送</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.broadcast_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, broadcast_enabled: e.target.checked }))}
+                disabled={isGuest}
+              />
+              <span>{settingsForm.broadcast_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>缓冲时间（分钟）</label>
+            <input
+              type="number"
+              value={settingsForm.broadcast_grace_minutes}
+              min="1"
+              max="120"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, broadcast_grace_minutes: e.target.value }))}
+            />
+          </div>
+          <div className="settings-group">
+            <label>检查间隔（分钟）</label>
+            <input
+              type="number"
+              value={settingsForm.broadcast_check_interval_minutes}
+              min="1"
+              max="60"
+              disabled={isGuest}
+              onChange={e => setSettingsForm(prev => ({ ...prev, broadcast_check_interval_minutes: e.target.value }))}
+            />
+          </div>
+        </div>
+        {workflow.broadcast?.history?.length > 0 && (
+          <div className="workflow-history">
+            <strong>最近推送记录</strong>
+            {workflow.broadcast.history.map(item => (
+              <div key={item.id} className="workflow-history-item">
+                <span>{item.article_id}</span>
+                <span>{item.push_title?.slice(0, 30) || '--'}</span>
+                <span>{item.strategy || '--'}</span>
+                <span>{item.pushed_at ? new Date(item.pushed_at).toLocaleString() : '--'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>评分与摘要 Prompt</h2></div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 16 }}>
+          保存后下次运行就会直接使用新的 Prompt，不需要重启服务器。
+        </p>
+        <div className="settings-group">
+          <label>评分 Prompt</label>
+          <textarea
+            value={scorePrompt}
+            onChange={e => setScorePrompt(e.target.value)}
+            rows={8}
+            placeholder="内容评分 Prompt"
+            className="workflow-textarea"
+          />
+        </div>
+        <div className="settings-group">
+          <label>{t('promptAbstract')}</label>
+          <textarea
+            value={abstractPrompt}
+            onChange={e => setAbstractPrompt(e.target.value)}
+            rows={6}
+            placeholder={t('promptAbstract')}
+            className="workflow-textarea"
+          />
+        </div>
+        <div className="settings-group">
+          <label>{t('promptEdit')}</label>
+          <textarea
+            value={editPrompt}
+            onChange={e => setEditPrompt(e.target.value)}
+            rows={8}
+            placeholder={t('promptEdit')}
+            className="workflow-textarea"
+          />
+        </div>
       </div>
 
       {!isGuest && (
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? '...' : t('save')}
+          {saving ? '...' : '保存 Prompt 与自动发布设置'}
         </button>
       )}
+    </div>
+  )
+}
+
+function BlocklistPage() {
+  const { t } = useLanguage()
+  const isGuest = getRole() === 'guest'
+  const [blocklist, setBlocklist] = useState([])
+  const [keywordDraft, setKeywordDraft] = useState('')
+  const [newRule, setNewRule] = useState({
+    pattern: '',
+    match_type: 'keyword',
+    field: 'title',
+    action: 'block',
+    source_key: '',
+    notes: '',
+    is_active: true,
+  })
+  const [loading, setLoading] = useState(true)
+  const [savingQuick, setSavingQuick] = useState(false)
+  const [ruleSavingId, setRuleSavingId] = useState(null)
+
+  const refreshBlocklist = useCallback(async () => {
+    try {
+      const data = await api.getBlocklist()
+      const rules = data.rules || []
+      setBlocklist(rules)
+      setKeywordDraft(quickKeywordTextFromRules(rules))
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshBlocklist()
+  }, [refreshBlocklist])
+
+  const handleRuleFieldChange = (ruleId, field, value) => {
+    setBlocklist(prev => prev.map(rule => rule.id === ruleId ? { ...rule, [field]: value } : rule))
+  }
+
+  const handleSaveRule = async (rule) => {
+    setRuleSavingId(rule.id)
+    try {
+      await api.updateBlocklistRule(rule.id, rule)
+      await refreshBlocklist()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setRuleSavingId(null)
+    }
+  }
+
+  const handleDeleteRule = async (ruleId) => {
+    if (!confirm('确认删除这条规则吗？')) return
+    try {
+      await api.deleteBlocklistRule(ruleId)
+      await refreshBlocklist()
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const handleCreateRule = async () => {
+    if (!newRule.pattern.trim()) return
+    setRuleSavingId('new')
+    try {
+      await api.createBlocklistRule({
+        ...newRule,
+        pattern: newRule.pattern.trim(),
+      })
+      setNewRule({
+        pattern: '',
+        match_type: 'keyword',
+        field: 'title',
+        action: 'block',
+        source_key: '',
+        notes: '',
+        is_active: true,
+      })
+      await refreshBlocklist()
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setRuleSavingId(null)
+    }
+  }
+
+  const handleSaveQuickKeywords = async () => {
+    setSavingQuick(true)
+    try {
+      const desiredKeywords = parseKeywordLibraryInput(keywordDraft)
+      const quickRules = blocklist.filter(isQuickKeywordRule)
+      const quickRuleMap = new Map(
+        quickRules.map(rule => [String(rule.pattern || '').trim().toLowerCase(), rule])
+      )
+      const desiredSet = new Set(desiredKeywords.map(keyword => keyword.toLowerCase()))
+      const tasks = []
+
+      for (const rule of quickRules) {
+        const normalized = String(rule.pattern || '').trim().toLowerCase()
+        if (!desiredSet.has(normalized)) {
+          tasks.push(api.deleteBlocklistRule(rule.id))
+        } else if (!rule.is_active) {
+          tasks.push(api.updateBlocklistRule(rule.id, { ...rule, is_active: true }))
+        }
+      }
+
+      for (const keyword of desiredKeywords) {
+        const normalized = keyword.toLowerCase()
+        if (!quickRuleMap.has(normalized)) {
+          tasks.push(api.createBlocklistRule({
+            pattern: keyword,
+            match_type: 'keyword',
+            field: 'title',
+            action: 'block',
+            source_key: '',
+            notes: '简易屏蔽词',
+            is_active: true,
+            sort_order: 50,
+          }))
+        }
+      }
+
+      await Promise.all(tasks)
+      await refreshBlocklist()
+      alert('屏蔽词库已保存，下一次抓取会立即按新词库过滤，无需重启服务器。')
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setSavingQuick(false)
+    }
+  }
+
+  if (loading) return <div className="empty">{t('loading')}</div>
+
+  const advancedRules = blocklist.filter(rule => !isQuickKeywordRule(rule))
+  const quickKeywordCount = parseKeywordLibraryInput(keywordDraft).length
+
+  return (
+    <div className="settings-page workflow-page blocklist-page">
+      <h1>屏蔽词库</h1>
+      <p className="workflow-subtitle">
+        标题里只要出现任意屏蔽词，就会在抓取阶段直接跳过。支持英文逗号、中文逗号或换行分隔；保存后下一次抓取立即生效。
+      </p>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header">
+          <h2>简易标题屏蔽词</h2>
+          {!isGuest && (
+            <button className="btn btn-primary btn-sm" onClick={handleSaveQuickKeywords} disabled={savingQuick}>
+              {savingQuick ? '保存中...' : '保存屏蔽词'}
+            </button>
+          )}
+        </div>
+        <p className="workflow-subtitle" style={{ marginTop: 0, marginBottom: 12 }}>
+          直接输入 `space,croo,bydfi,赞助商` 这类词即可，命中标题就跳过抓取。
+        </p>
+        <textarea
+          value={keywordDraft}
+          onChange={e => setKeywordDraft(e.target.value)}
+          rows={6}
+          className="workflow-textarea"
+          disabled={isGuest}
+          placeholder="例如：space,croo,bydfi,赞助商"
+        />
+        <div className="blocklist-toolbar">
+          <span className="workflow-inline-value">当前简易词条数：{quickKeywordCount}</span>
+          {!isGuest && (
+            <button className="btn btn-outline btn-sm" onClick={() => setKeywordDraft(quickKeywordTextFromRules(blocklist))}>
+              恢复当前线上词库
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-header"><h2>高级规则</h2></div>
+
+        <div className="workflow-rule-row workflow-rule-row-new">
+          <input
+            value={newRule.pattern}
+            onChange={e => setNewRule(prev => ({ ...prev, pattern: e.target.value }))}
+            placeholder="关键词或正则"
+            disabled={isGuest}
+          />
+          <select value={newRule.source_key} onChange={e => setNewRule(prev => ({ ...prev, source_key: e.target.value }))} disabled={isGuest}>
+            <option value="">全部来源</option>
+            {BLOCKCHAIN_SOURCE_KEYS.map(key => (
+              <option key={key} value={key}>{key}</option>
+            ))}
+          </select>
+          <select value={newRule.field} onChange={e => setNewRule(prev => ({ ...prev, field: e.target.value }))} disabled={isGuest}>
+            <option value="title">标题</option>
+            <option value="content">正文</option>
+          </select>
+          <select value={newRule.action} onChange={e => setNewRule(prev => ({ ...prev, action: e.target.value }))} disabled={isGuest}>
+            <option value="block">阻断</option>
+            <option value="tail_cut">截尾</option>
+          </select>
+          <select value={newRule.match_type} onChange={e => setNewRule(prev => ({ ...prev, match_type: e.target.value }))} disabled={isGuest}>
+            <option value="keyword">关键词</option>
+            <option value="regex">正则</option>
+          </select>
+          <input
+            value={newRule.notes}
+            onChange={e => setNewRule(prev => ({ ...prev, notes: e.target.value }))}
+            placeholder="备注"
+            disabled={isGuest}
+          />
+          {!isGuest && (
+            <button className="btn btn-primary btn-sm" onClick={handleCreateRule} disabled={ruleSavingId === 'new'}>
+              {ruleSavingId === 'new' ? '...' : '新增'}
+            </button>
+          )}
+        </div>
+
+        <div className="workflow-rule-list">
+          {advancedRules.length === 0 ? (
+            <div className="empty" style={{ padding: 20 }}>暂无高级规则</div>
+          ) : advancedRules.map(rule => (
+            <div key={rule.id} className="workflow-rule-row">
+              <input
+                value={rule.pattern || ''}
+                onChange={e => handleRuleFieldChange(rule.id, 'pattern', e.target.value)}
+                disabled={isGuest}
+              />
+              <select value={rule.source_key || ''} onChange={e => handleRuleFieldChange(rule.id, 'source_key', e.target.value)} disabled={isGuest}>
+                <option value="">全部来源</option>
+                {BLOCKCHAIN_SOURCE_KEYS.map(key => (
+                  <option key={key} value={key}>{key}</option>
+                ))}
+              </select>
+              <select value={rule.field || 'title'} onChange={e => handleRuleFieldChange(rule.id, 'field', e.target.value)} disabled={isGuest}>
+                <option value="title">标题</option>
+                <option value="content">正文</option>
+              </select>
+              <select value={rule.action || 'block'} onChange={e => handleRuleFieldChange(rule.id, 'action', e.target.value)} disabled={isGuest}>
+                <option value="block">阻断</option>
+                <option value="tail_cut">截尾</option>
+              </select>
+              <select value={rule.match_type || 'keyword'} onChange={e => handleRuleFieldChange(rule.id, 'match_type', e.target.value)} disabled={isGuest}>
+                <option value="keyword">关键词</option>
+                <option value="regex">正则</option>
+              </select>
+              <input
+                value={rule.notes || ''}
+                onChange={e => handleRuleFieldChange(rule.id, 'notes', e.target.value)}
+                placeholder="备注"
+                disabled={isGuest}
+              />
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!rule.is_active}
+                  onChange={e => handleRuleFieldChange(rule.id, 'is_active', e.target.checked)}
+                  disabled={isGuest}
+                />
+                <span>启用</span>
+              </label>
+              {!isGuest && (
+                <>
+                  <button className="btn btn-outline btn-sm" onClick={() => handleSaveRule(rule)} disabled={ruleSavingId === rule.id}>
+                    {ruleSavingId === rule.id ? '...' : '保存'}
+                  </button>
+                  <button className="btn btn-sm" style={{ background: 'var(--danger)', color: '#fff' }} onClick={() => handleDeleteRule(rule.id)}>
+                    删除
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1332,6 +2484,7 @@ function AiArticlesPage() {
   const { t, lang } = useLanguage()
   const isGuest = getRole() === 'guest'
   const [source, setSource] = useState('all')
+  const [sortBy, setSortBy] = useState('time')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [articles, setArticles] = useState([])
@@ -1350,7 +2503,7 @@ function AiArticlesPage() {
   const fetchArticles = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.getAiArticles({ source, page, pageSize: PAGE_SIZE })
+      const data = await api.getAiArticles({ source, page, pageSize: PAGE_SIZE, sortBy })
       setTotal(data.total || 0)
       setArticles(data.articles || [])
     } catch (e) {
@@ -1358,9 +2511,9 @@ function AiArticlesPage() {
     } finally {
       setLoading(false)
     }
-  }, [source, page])
+  }, [source, page, sortBy])
 
-  useEffect(() => { setPage(1) }, [source])
+  useEffect(() => { setPage(1) }, [source, sortBy])
   useEffect(() => { fetchArticles() }, [fetchArticles])
   useEffect(() => { api.getAiStats().then(d => setAiSources(d.sources || [])).catch(() => {}) }, [])
 
@@ -1398,23 +2551,31 @@ function AiArticlesPage() {
     }
   }
 
-  const handlePublish = async (articleId) => {
+  const refreshSelectedArticle = async (articleId) => {
+    const data = await api.getAiArticle(articleId)
+    setDetailArticle(data)
+    await fetchArticles()
+    return data
+  }
+
+  const handleSaveToBackend = async (articleId) => {
     try {
-      const result = await api.publishAiArticle(articleId)
-      alert(t('aiPublishSuccess') + ` (CMS ID: ${result.cms_id})`)
-      // Refresh detail
-      const data = await api.getAiArticle(articleId)
-      setDetailArticle(data)
+      const result = await api.saveAiArticleDraft(articleId)
+      alert(t('saveToBackendSuccess') + ` (CMS ID: ${result.cms_id})`)
+      await refreshSelectedArticle(articleId)
     } catch (e) {
       alert(e.message)
     }
   }
 
-  const scoreBadgeStyle = (score) => {
-    if (score >= 90) return { background: '#10b981', color: '#fff' }
-    if (score >= 80) return { background: '#3b82f6', color: '#fff' }
-    if (score >= 70) return { background: '#f59e0b', color: '#fff' }
-    return { background: 'var(--surface)', color: 'var(--text2)' }
+  const handlePublish = async (articleId) => {
+    try {
+      const result = await api.publishAiArticle(articleId)
+      alert(t('publishSuccess') + ` (CMS ID: ${result.cms_id})`)
+      await refreshSelectedArticle(articleId)
+    } catch (e) {
+      alert(e.message)
+    }
   }
 
   // Editor mode
@@ -1427,6 +2588,8 @@ function AiArticlesPage() {
     if (detailLoading) return <div className="empty">{t('loading')}</div>
     const a = detailArticle
     if (!a) return null
+    const publishMeta = publishStageMeta(a.publish_stage)
+    const published = isPublishedStage(a.publish_stage)
     return (
       <div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -1437,24 +2600,14 @@ function AiArticlesPage() {
             <button className="btn btn-outline btn-sm" onClick={() => setEditor(a)}>
               <Icon name="edit" size={14} /> {t('editArticle')}
             </button>
-            {!a.cms_id && (
-              <button className="btn btn-primary btn-sm" onClick={() => handlePublish(a.article_id)}>
-                <Icon name="send" size={14} /> {t('saveAndPush')}
+            {!published && (
+              <button className="btn btn-outline btn-sm" onClick={() => handleSaveToBackend(a.article_id)}>
+                <Icon name="send" size={14} /> {a.publish_stage === 'draft' ? t('updateDraft') : t('saveToBackend')}
               </button>
             )}
-            {a.cms_id && (
-              <button className="btn btn-outline btn-sm" onClick={async () => {
-                if (!confirm(t('republishConfirm'))) return
-                try {
-                  const result = await api.publishAiArticle(a.article_id)
-                  alert(t('republishSuccess') + ` (CMS ID: ${result.cms_id})`)
-                  const data = await api.getAiArticle(a.article_id)
-                  setDetailArticle(data)
-                } catch (e) { alert(e.message) }
-              }}>
-                <Icon name="send" size={14} /> {t('republish')}
-              </button>
-            )}
+            <button className={`btn btn-sm ${published ? 'btn-outline' : 'btn-primary'}`} onClick={() => handlePublish(a.article_id)}>
+              <Icon name="send" size={14} /> {published ? t('updatePublished') : t('publishNow')}
+            </button>
             <button className="btn btn-sm" style={{ background: 'var(--danger)', color: 'white', border: 'none' }} onClick={async () => {
               if (!confirm(t('confirmDelete'))) return
               try { await api.deleteAiArticle(a.article_id); setSelected(null); setDetailArticle(null); fetchArticles() } catch (e) { alert(e.message) }
@@ -1462,7 +2615,7 @@ function AiArticlesPage() {
               <Icon name="trash" size={14} /> {t('deleteArticle')}
             </button>
           </>)}
-          {a.cms_id && <span className="badge badge-success">{t('aiPublished')}</span>}
+          <span className={`badge ${publishMeta.className}`}>{publishMeta.label}</span>
         </div>
         <div className="card">
           <div className="article-detail">
@@ -1561,21 +2714,26 @@ function AiArticlesPage() {
       </div>
 
       {/* Source tabs */}
-      <div className="source-select" style={{ marginBottom: 12 }}>
-        <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>
-          {t('aiAllSources')}
-        </button>
-        {aiSources.map(s => (
-          <button key={s} className={source === s ? 'active' : ''} onClick={() => setSource(s)}>
-            {t(`sourceName_${s}`) || s}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div className="source-select" style={{ marginBottom: 0 }}>
+          <button className={source === 'all' ? 'active' : ''} onClick={() => setSource('all')}>
+            {t('aiAllSources')}
           </button>
-        ))}
+          {aiSources.map(s => (
+            <button key={s} className={source === s ? 'active' : ''} onClick={() => setSource(s)}>
+              {t(`sourceName_${s}`) || s}
+            </button>
+          ))}
+        </div>
+        <ArticleSortControls sortBy={sortBy} onChange={setSortBy} />
       </div>
 
       {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{t('aiNoArticles')}</div> : (
         <>
           <div className="article-grid">
-            {articles.map(a => (
+            {articles.map(a => {
+              const publishMeta = publishStageMeta(a.publish_stage)
+              return (
               <div key={a.article_id}
                 className={`article-card ${selectMode && selectedIds.has(a.article_id) ? 'selected' : ''}`}
                 style={{ position: 'relative' }}
@@ -1597,7 +2755,7 @@ function AiArticlesPage() {
                       </span>
                     )}
                     {a.category && <span style={{ fontSize: 11, color: 'var(--text2)' }}>{a.category}</span>}
-                    {a.cms_id && <span className="badge badge-success" style={{ fontSize: 10, padding: '0 5px' }}>{t('aiPublished')}</span>}
+                    <span className={`badge ${publishMeta.className}`} style={{ fontSize: 10, padding: '0 5px' }}>{publishMeta.label}</span>
                   </div>
                   <h3>{a.title}</h3>
                   {a.abstract && <p className="card-abstract">{a.abstract}</p>}
@@ -1617,7 +2775,7 @@ function AiArticlesPage() {
                   <span>{a.publish_time || ''}</span>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
           {totalPages > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 20 }}>
@@ -1924,6 +3082,7 @@ const PAGES = {
   'ai-articles': AiArticlesPage,
   'ai-dashboard': AiDashboardPage,
   prompts: PromptPage,
+  blocklist: BlocklistPage,
   logs: LogsPage,
   profile: ProfilePage,
 }
@@ -1971,7 +3130,7 @@ export default function App() {
 
 // Separate component for logged-in state (can use hooks safely)
 function MainApp({ page, setPage, onLogout }) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   const [mode, setMode] = useState(() => {
     try { return localStorage.getItem('app_mode') || 'blockchain' } catch { return 'blockchain' }
   })
@@ -1987,7 +3146,8 @@ function MainApp({ page, setPage, onLogout }) {
   const blockchainNav = [
     { key: 'dashboard', icon: 'dashboard', label: t('dashboard') },
     { key: 'articles', icon: 'article', label: t('articles') },
-    { key: 'prompts', icon: 'sparkles', label: t('prompts') },
+    { key: 'prompts', icon: 'sparkles', label: lang === 'zh' ? '工作流' : 'Workflow' },
+    { key: 'blocklist', icon: 'shield', label: lang === 'zh' ? '屏蔽词库' : 'Blocklist' },
     { key: 'logs', icon: 'log', label: t('logs') },
   ]
   const aiNav = [

@@ -6,6 +6,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 router = APIRouter(prefix="/api/db", tags=["database"])
 
 
+def _is_public_stage(article: dict) -> bool:
+    return (article or {}).get("publish_stage") in {"published", "broadcasted"}
+
+
 @router.get("/articles")
 def list_db_articles(
     request: Request,
@@ -31,7 +35,7 @@ def list_db_articles(
     result = []
     for a in articles:
         a_copy = {k: v for k, v in a.items() if k != "blocks"}
-        a_copy["published"] = a.get("cms_id") is not None
+        a_copy["published"] = _is_public_stage(a)
         result.append(a_copy)
 
     return {
@@ -53,7 +57,7 @@ def get_db_article(request: Request, article_id: str):
     if not article:
         raise HTTPException(404, f"Article {article_id} not found")
 
-    article["published"] = article.get("cms_id") is not None
+    article["published"] = _is_public_stage(article)
     return article
 
 

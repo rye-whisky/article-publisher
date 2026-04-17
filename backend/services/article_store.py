@@ -43,7 +43,13 @@ class ArticleStore:
             articles.extend(scraper._iter_articles(limit=per_source, use_cache=use_cache))
         return articles
 
-    def list_articles_paged(self, source: str = "all", page: int = 1, page_size: int = 20) -> tuple[int, list[dict]]:
+    def list_articles_paged(
+        self,
+        source: str = "all",
+        page: int = 1,
+        page_size: int = 20,
+        sort_by: str = "time",
+    ) -> tuple[int, list[dict]]:
         """List articles with pagination. Returns (total_count, page_of_articles)."""
         if source != "all":
             scraper = self.scrapers.get(source)
@@ -54,7 +60,16 @@ class ArticleStore:
             all_articles = []
             for scraper in self.scrapers.values():
                 all_articles.extend(scraper._iter_articles(limit=0))
-        all_articles.sort(key=lambda a: a.get("publish_time", ""), reverse=True)
+        if sort_by == "score":
+            all_articles.sort(
+                key=lambda a: (
+                    a.get("score") is None,
+                    -(a.get("score") or 0),
+                    a.get("publish_time", ""),
+                )
+            )
+        else:
+            all_articles.sort(key=lambda a: a.get("publish_time", ""), reverse=True)
 
         total = len(all_articles)
         start = (page - 1) * page_size
