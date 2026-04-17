@@ -20,8 +20,8 @@ class TechFlowScraper(BaseScraper):
 
     source_key = "techflow"
 
-    def __init__(self, cfg: dict, session, output_dir: Path):
-        super().__init__(cfg, session, output_dir)
+    def __init__(self, cfg: dict, session, output_dir: Path, db=None):
+        super().__init__(cfg, session, output_dir, db)
         self.excluded_keywords = ["加密早报", "Bitget", "HashKey", "Pharos", "火币", "Deepcoin"]
 
     def _article_id_from_path(self, path: Path) -> str | None:

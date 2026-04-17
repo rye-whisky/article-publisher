@@ -20,8 +20,8 @@ class StcnScraper(BaseScraper):
 
     source_key = "stcn"
 
-    def __init__(self, cfg: dict, session, output_dir: Path):
-        super().__init__(cfg, session, output_dir)
+    def __init__(self, cfg: dict, session, output_dir: Path, db=None):
+        super().__init__(cfg, session, output_dir, db)
         self.allowed_authors = set(cfg.get("allowed_authors", []))
 
     def _get_id_patterns(self, article_id: str) -> list[str]:
