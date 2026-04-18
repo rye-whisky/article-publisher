@@ -209,10 +209,11 @@ After=network.target
 Type=simple
 User=article-publisher
 Group=article-publisher
-WorkingDirectory={APP_DIR}
+WorkingDirectory={APP_DIR}/backend
 Environment="PATH={APP_DIR}/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart={APP_DIR}/venv/bin/uvicorn backend.api:app \\
+Environment="PYTHONPATH={APP_DIR}/backend:{APP_DIR}"
+ExecStart={APP_DIR}/venv/bin/uvicorn api:app \\
     --host 0.0.0.0 \\
     --port {BACKEND_PORT} \\
     --workers 1
