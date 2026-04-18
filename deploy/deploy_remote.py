@@ -25,7 +25,7 @@ BACKEND_PORT = 8001
 NGINX_PORT = 8081
 
 
-def check_env():
+def check_env() -> None:
     """Validate required deployment configuration."""
     if not SERVER["host"]:
         print("[!] Error: set DEPLOY_HOST before running this script")
@@ -83,20 +83,56 @@ def connect_ssh() -> paramiko.SSHClient:
     sys.exit(1)
 
 
-def run_cmd(ssh: paramiko.SSHClient, command: str, timeout: int = 120) -> tuple[str, str]:
-    """Execute an SSH command and return stdout/stderr."""
+def exec_raw(ssh: paramiko.SSHClient, command: str, timeout: int = 120) -> tuple[int, str, str]:
+    """Execute an SSH command and return exit code, stdout, stderr."""
     stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
-    out = stdout.read().decode().strip()
-    err = stderr.read().decode().strip()
+    out = stdout.read().decode("utf-8", errors="replace").strip()
+    err = stderr.read().decode("utf-8", errors="replace").strip()
+    exit_code = stdout.channel.recv_exit_status()
+    return exit_code, out, err
+
+
+def run_cmd(
+    ssh: paramiko.SSHClient,
+    command: str,
+    timeout: int = 120,
+    check: bool = True,
+) -> tuple[str, str]:
+    """Execute a remote command, optionally raising when it fails."""
+    exit_code, out, err = exec_raw(ssh, command, timeout=timeout)
     if err and "warning" not in err.lower():
         print(f"  [stderr] {err[:300]}")
+    if check and exit_code != 0:
+        raise RuntimeError(f"Remote command failed ({exit_code}): {command}\n{err or out}")
     return out, err
 
 
-def upload_dir(sftp, ssh: paramiko.SSHClient, local_dir: Path, remote_dir: str, exclude=None):
+def remote_dir_exists(ssh: paramiko.SSHClient, path: str) -> bool:
+    """Return True if the remote directory exists."""
+    exit_code, _, _ = exec_raw(ssh, f"test -d {path}")
+    return exit_code == 0
+
+
+def detect_nginx_target(ssh: paramiko.SSHClient) -> tuple[str, list[str]]:
+    """Return the nginx config target file and any follow-up commands."""
+    if remote_dir_exists(ssh, "/etc/nginx/conf.d"):
+        return "/etc/nginx/conf.d/article-publisher.conf", [
+            "rm -f /etc/nginx/sites-enabled/article-publisher",
+            "rm -f /etc/nginx/sites-available/article-publisher",
+        ]
+
+    if remote_dir_exists(ssh, "/etc/nginx/sites-available") and remote_dir_exists(ssh, "/etc/nginx/sites-enabled"):
+        return "/etc/nginx/sites-available/article-publisher", [
+            "ln -sf /etc/nginx/sites-available/article-publisher /etc/nginx/sites-enabled/article-publisher",
+        ]
+
+    raise RuntimeError("Unsupported nginx layout: neither conf.d nor sites-available/sites-enabled found")
+
+
+def upload_dir(sftp, ssh: paramiko.SSHClient, local_dir: Path, remote_dir: str, exclude=None) -> None:
     """Recursively upload a directory to the target host."""
     if exclude is None:
-        exclude = {"__pycache__", ".pyc", "node_modules", ".git"}
+        exclude = {"__pycache__", ".pyc", "node_modules", ".git", ".pytest_cache"}
 
     for item in local_dir.iterdir():
         name = item.name
@@ -112,7 +148,7 @@ def upload_dir(sftp, ssh: paramiko.SSHClient, local_dir: Path, remote_dir: str, 
             sftp.put(str(item), remote_path)
 
 
-def deploy():
+def deploy() -> None:
     """Deploy the local project to the configured remote server."""
     check_env()
 
@@ -149,7 +185,7 @@ def deploy():
         sftp.close()
 
         print("\n[3/7] Setting up Python environment...")
-        venv_exists = run_cmd(ssh, f"test -d {APP_DIR}/venv && echo EXISTS")[0]
+        venv_exists = exec_raw(ssh, f"test -d {APP_DIR}/venv && echo EXISTS")[1]
         if venv_exists != "EXISTS":
             print("  Creating virtualenv ...")
             run_cmd(ssh, f"python3 -m venv {APP_DIR}/venv", timeout=60)
@@ -157,8 +193,8 @@ def deploy():
             print("  Virtualenv already exists, reusing it")
 
         print("  Installing dependencies ...")
-        run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install --upgrade pip", timeout=120)
-        run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install -r {APP_DIR}/requirements.txt", timeout=300)
+        run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install --upgrade pip", timeout=180)
+        run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install -r {APP_DIR}/requirements.txt", timeout=600)
 
         print("\n[4/7] Configuring system user...")
         run_cmd(ssh, "id -u article-publisher >/dev/null 2>&1 || useradd -r -s /bin/false article-publisher")
@@ -179,8 +215,7 @@ Environment="PYTHONUNBUFFERED=1"
 ExecStart={APP_DIR}/venv/bin/uvicorn backend.api:app \\
     --host 0.0.0.0 \\
     --port {BACKEND_PORT} \\
-    --workers 1 \\
-    --log-config {APP_DIR}/deploy/logging.ini
+    --workers 1
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
@@ -206,33 +241,35 @@ WantedBy=multi-user.target
         run_cmd(ssh, "systemctl daemon-reload")
 
         print("\n[6/7] Updating Nginx config...")
+        nginx_target, nginx_followups = detect_nginx_target(ssh)
         sftp = ssh.open_sftp()
         sftp.put(str(local_root / "deploy" / "nginx.conf"), "/tmp/article-publisher-nginx.conf")
         sftp.close()
-        run_cmd(ssh, "cp /tmp/article-publisher-nginx.conf /etc/nginx/sites-available/article-publisher")
-        run_cmd(ssh, "ln -sf /etc/nginx/sites-available/article-publisher /etc/nginx/sites-enabled/article-publisher")
-        _, nginx_err = run_cmd(ssh, "nginx -t")
-        if "test is successful" not in nginx_err and "syntax is ok" not in nginx_err:
-            print(f"  [!] Nginx config test did not report success: {nginx_err[:300]}")
-        else:
+        run_cmd(ssh, f"cp /tmp/article-publisher-nginx.conf {nginx_target}")
+        for command in nginx_followups:
+            run_cmd(ssh, command)
+        nginx_out, nginx_err = run_cmd(ssh, "nginx -t")
+        if "test is successful" in nginx_out or "test is successful" in nginx_err:
             print("  Nginx config test passed")
+        else:
+            print(f"  [!] Nginx config test returned unexpected output: {(nginx_err or nginx_out)[:300]}")
         run_cmd(ssh, "systemctl reload nginx")
 
         print("\n[7/7] Restarting service...")
         run_cmd(ssh, "systemctl restart article-publisher")
         time.sleep(3)
-        status = run_cmd(ssh, "systemctl is-active article-publisher")[0]
-        if "active" in status:
+        status = exec_raw(ssh, "systemctl is-active article-publisher")[1]
+        if status == "active":
             print("\n========================================")
             print("[+] Deployment succeeded")
             print("========================================")
             print(f"  Backend: http://{SERVER['host']}:{BACKEND_PORT}")
             print(f"  Nginx:   http://{SERVER['host']}:{NGINX_PORT}")
-            api_check = run_cmd(ssh, f"curl -s http://localhost:{BACKEND_PORT}/api/status")[0]
-            print(f"  /api/status -> {api_check[:120]}")
+            api_check = exec_raw(ssh, f"curl -fsS http://localhost:{BACKEND_PORT}/api/status", timeout=30)[1]
+            print(f"  /api/status -> {api_check[:160]}")
         else:
             print(f"\n[!] Service failed to start (status: {status})")
-            logs = run_cmd(ssh, "journalctl -u article-publisher -n 50 --no-pager")[0]
+            logs = run_cmd(ssh, "journalctl -u article-publisher -n 80 --no-pager")[0]
             print(logs)
             sys.exit(1)
     finally:

@@ -1,12 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unified auto-publish + broadcast scheduler.
-
-Rules:
-  - 8:00-10:00: any article with score >= 75 can publish + broadcast
-  - Other windows: only score >= 85 can publish + broadcast
-  - Each publish window can only consume one slot
-  - Before publishing, semantic dedup against the last 6 auto-published+broadcasted titles
-"""
+"""Unified auto-publish + broadcast scheduler."""
 
 from __future__ import annotations
 
@@ -22,7 +15,7 @@ MORNING_END = 10
 
 
 class AutoPublishScheduler:
-    """Unified auto-publish + broadcast scheduler."""
+    """Run window-based auto publish + app broadcast checks."""
 
     def __init__(self, pipeline_service):
         self.pipeline_service = pipeline_service
@@ -94,7 +87,7 @@ class AutoPublishScheduler:
                     "article_id": chosen["article_id"],
                 }
 
-        push_label = self.pipeline_service.get_push_label(score) or "热文"
+        push_label = self.pipeline_service.get_push_label(score) or "\u70ed\u6587"
 
         try:
             result = self.pipeline_service.auto_publish_and_broadcast(

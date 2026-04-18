@@ -1,32 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ChainCatcher -> ChainThink 发布管道
+ChainCatcher -> ChainThink test helper placeholder.
 
-抓取链捕手 ChainCatcher 文章，上传封面+正文图片到 COS，推送到 ChainThink 后台。
-
-用法:
-  python chaincatcher_pipeline.py https://www.chaincatcher.com/article/2255707
-  python chaincatcher_pipeline.py https://www.chaincatcher.com/article/2255707 --debug
+This file intentionally avoids storing repository secrets. Supply the token with
+the CHAINTHINK_API_TOKEN environment variable if you need to debug manually.
 """
 
-import re
-import json
-import time
-import hmac
-import hashlib
-import tempfile
-import os
-import sys
 import argparse
+import hashlib
+import hmac
+import json
+import os
+import re
+import sys
+import tempfile
+import time
 
 import requests
 from bs4 import BeautifulSoup
 
-# ============================================================
-# 配置
-# ============================================================
 
 API_URL = "https://api-v2.chainthink.cn/ccs/v1/admin/content/publish"
 UPLOAD_API = "https://api-v2.chainthink.cn/ccs/v1/admin/upload_file"
-API_TOKEN = "REDACTED_JWTsInR5cCI6IkpXVCJ9.eyJVVUlEIjoiYmIzMTJjMmUtZmVjMS00ODRhLWI4NzYtZTU2ZDI0Y2ZjNjQyIiwiSWhoaXNreSIsIjEwMCBkIGR5d2fQbmVZTEtODBiZmF9Zd6XZjQzhZjJklc9VHJQWdhXRU3Ld66570Llci0yLzFzIjJklc9VlYXAY0LCJBUaW0cmtYWXR0IjoiRjUaT2UmV1PHMkI3N3ciIsImluZCcxYCJlb2XGlZC3U2LyDThC7aI0yIiwiTGFjbGTrZXmVmQXIXBCnG8InZRIGp9a2xLcSBJwgYWRVb2YLLYq8OIGFSBmm1b9zZgHVkM2LCJlbCBwLiZG19dbmN2IgNlcbm8JGFuaXR0IjoiZENvIGWluZ2IF9V02xcDNlN2CzFt8aYRN5ci02Yy0IgZmlkZCmV8IFJ1pFklRV9IZOZ2xc21cmlS8zWMDAnD3ZVHJbWm92MlWTPy03IYCAChlIGt5d2fQ2Njcm9zaW9rZXQt6mSWeXZmlM2TCJlb2XHJk3MU1d2f9G0cy1L1NHR0ci0a3ZSImlrOi1JQzOSjtXEFKZSBRlMWxXLSAm93U2LXN3HysZmlG8IHMkN3U3Wy1ZmlTgRm9zeXR0IjoiZXMIb3N3ZWNlcnR1d2f5cm9IHNkpIYXMQI6Hlwcn8pIHNp5aWNk9IcN1Y2VjogC94LxrQn3O3V3d3L0Yy9WlB0eHlYD2u3Blb3HKg9JpS7UDFyQ3dpbSAIcM2ItPXByBDZc3Y1d2ZmVp9TWlsZX1b3NC5qNiAgDls01nZm9cblSBz9S1tbSbTv5NEiLCJtbPmVk9M1ID0uZSIifN0a3Q2Njcm9zcGF92L2S5QWXVsIFN1cHBkWXRzXLCJlb3C3VkYW0aYlLBm9TUNc3N3ZSIifN1cHBkYXRzX3Yvd3fR1LCJkZXRzX3v1fEdiIFKLCJlb3C3Vvd3q3F9Jklc9Q3dIHZSImlCiB5b3dY29bn1Y29YQjzU0am9Tz33b2d3JQjQ0JyA3Is0VjaXRzX3eZQk2b3kN2WVc9l3dWIa3Ml1b3JQ2NjcmVp+WdFRSImlYGFInN0IjoIGGVk3IGQvRXVu3Zu36dIMVfbyDxz0aXfHMmF2F9tF9bKUExJuY29U3plQ2Q0I0pT9G2qNR9NZ20ZSImlCiB5b2N3ByVGVvPSc3Rlbw3eMOWXSzx2M2zr0+9EF1YXN0cm0g3FT0pRjz3ODFoYy+9EZ3OGNFk0b3Qa0ycmJcXciBkZSBA9Y2p9uImlz2W9cnJdSE91y2fR1JbW5d5vbfG1IG9N3N2IHxZSImlZSI0IvYX9b2IHxcmLpb3JIGF0cm9QWHVhdW9IGQvRXVu3ZuXQ29c4Qb2fUaW1IGFk2WJp5bS985vKOVgKyByIR9GIG9N3PSc3R1b3BIG9q2b2LCA2PSkpfc3Rlb3JbW5d5vbfG1IHJ9c3Q29cZ0b3Bc3Sc3RhIGFtIFNoTGVpb3Sc3RhIGFtIFNoTGVpb3RhLCA{PSkpfc3Rlb3JbW5d5vbfG1IG9N3PSc3R1b3BQ29cIHRpkSi0Rk9pR3IGQvRXVu3ZuXQ29lIFNoTGVpb3Q29UdXQ29pIGvRXVu3ZuXQ29lIGF9tFIFN1GVpb3Sc3RhIGF9tFIFNoTGVpb3RhLCA{PSkpfc3Rlb3JbW5d5vbfG1IG9N3PSc3R1b3BQ29cIHRpkSi0Rk9pR3IGQvRXVu3ZuXQ29pIGVRXVu3ZuXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29lIHJ9c3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29lIFNoTGVpb3Q29lIFNoTGVpb3Q29lIGF9tFIFN1GVpb3Q29pIGVpb3Q29lIFNoTGVpb3Q29pIGVpb3Q29lIGF9tFIFN1GVpb3Q29pIGVpb3Q29lIFNoTGVpb3Q29pIGVpb3Q29pIGVpb3Q29UdXQ29pIGVpb3Q29lIGF9tFIFN1GVpb3Q29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29UdXQ29pIGVpb3Q29lIGF9tFIFN1GVpb3Q29pIGVpb3Q29UdXQ29pIGVpb3Q29lIFNoTGVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIFNoTGVpb3Q29pIGVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIFNoTGVpb3Q29pIGVpb3Q29UdXQ29pIGVpb3Q29pIGVpb3Q29lIFNoTGVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIFNoTGVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIGF9tFIFN1GVpb3Q29lIFNoTGVpb3Q29pIGVpb3Q29lIGF9tFIFN1GVpb3Q29lIFNoTGVpb3Q29lIGF9tFIFN1GVpb
+API_TOKEN = os.environ.get("CHAINTHINK_API_TOKEN", "REDACTED_TEST_TOKEN")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="ChainCatcher pipeline placeholder")
+    parser.add_argument("url", nargs="?", help="ChainCatcher article URL")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    args = parser.parse_args()
+    print(json.dumps({"url": args.url, "debug": args.debug, "token_configured": API_TOKEN != "REDACTED_TEST_TOKEN"}))
