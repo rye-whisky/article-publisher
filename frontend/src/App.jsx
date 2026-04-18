@@ -110,6 +110,7 @@ const getTagList = (tags) => Array.isArray(tags) ? tags.filter(Boolean) : []
 
 const BLOCKCHAIN_SOURCE_KEYS = ['stcn', 'techflow', 'blockbeats', 'chaincatcher', 'odaily']
 const AUTO_PUBLISH_SOURCE_KEYS = ['techflow', 'blockbeats']
+const AUTO_CANDIDATE_SOURCE_KEY = 'auto_candidates'
 const ARTICLE_SORT_OPTIONS = [
   { key: 'time', labelKey: 'sortByTime' },
   { key: 'score', labelKey: 'sortByScore' },
@@ -1140,6 +1141,7 @@ function ArticlesPage() {
   const [editor, setEditor] = useState(null) // null | article object for edit, 'new' for create
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [autoCandidateWindow, setAutoCandidateWindow] = useState(null)
   const PAGE_SIZE = 20
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -1149,6 +1151,7 @@ function ArticlesPage() {
       const data = await api.getArticles(source, page, PAGE_SIZE, sortBy)
       setTotal(data.total || 0)
       setArticles(data.articles || [])
+      setAutoCandidateWindow(data.auto_candidate_window || null)
     } catch (e) {
       console.error(e)
     } finally {
@@ -1391,6 +1394,30 @@ function ArticlesPage() {
     } catch (e) { alert(e.message) }
   }
 
+  const sourceButtons = [
+    { key: 'all', label: 'ALL' },
+    { key: AUTO_CANDIDATE_SOURCE_KEY, label: t('autoCandidates') },
+    ...BLOCKCHAIN_SOURCE_KEYS.map(key => ({ key, label: key.toUpperCase() })),
+  ]
+
+  const formatWindowTime = (value) => {
+    if (!value) return '--:--'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '--:--'
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const autoCandidateSummary = autoCandidateWindow ? {
+    window: `${formatWindowTime(autoCandidateWindow.window_start)} - ${formatWindowTime(autoCandidateWindow.window_end)}`,
+    minScore: autoCandidateWindow.min_score,
+    sources: (autoCandidateWindow.auto_sources || []).map(key => key.toUpperCase()).join(' / '),
+    windowFull: !!autoCandidateWindow.window_full,
+  } : null
+
+  const emptyStateText = source === AUTO_CANDIDATE_SOURCE_KEY
+    ? (autoCandidateSummary?.windowFull ? t('autoCandidateWindowCompleted') : t('noAutoCandidatesFound'))
+    : t('noArticlesFound')
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -1411,16 +1438,39 @@ function ArticlesPage() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-          {['all', ...BLOCKCHAIN_SOURCE_KEYS].map(s => (
-            <button key={s} className={`btn btn-sm ${source === s ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(s)}>
-              {s.toUpperCase()}
+          {sourceButtons.map(item => (
+            <button key={item.key} className={`btn btn-sm ${source === item.key ? 'btn-primary' : 'btn-outline'}`} onClick={() => handleSourceChange(item.key)}>
+              {item.label}
             </button>
           ))}
         </div>
         <ArticleSortControls sortBy={sortBy} onChange={setSortBy} />
       </div>
 
-      {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{t('noArticlesFound')}</div> : (
+      {source === AUTO_CANDIDATE_SOURCE_KEY && autoCandidateSummary && (
+        <div className="card" style={{ marginBottom: 16, padding: '14px 16px', background: 'linear-gradient(135deg, rgba(59,130,246,0.14), rgba(16,185,129,0.08))', border: '1px solid rgba(59,130,246,0.22)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{t('autoCandidateWindow')}</div>
+              <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
+                <span>{autoCandidateSummary.window}</span>
+                <span style={{ margin: '0 10px', color: 'var(--border)' }}>|</span>
+                <span>{t('autoCandidateThreshold')}: &ge;{autoCandidateSummary.minScore}</span>
+                <span style={{ margin: '0 10px', color: 'var(--border)' }}>|</span>
+                <span>{t('autoCandidateSources')}: {autoCandidateSummary.sources || '--'}</span>
+              </div>
+              {autoCandidateSummary.windowFull && (
+                <div style={{ fontSize: 12, color: 'var(--primary)', marginTop: 6 }}>
+                  {t('autoCandidateWindowCompleted')}
+                </div>
+              )}
+            </div>
+            <span className="badge badge-info" style={{ padding: '4px 10px' }}>{total}</span>
+          </div>
+        </div>
+      )}
+
+      {loading ? <div className="empty">{t('loading')}</div> : articles.length === 0 ? <div className="empty">{emptyStateText}</div> : (
         <>
           <div className="article-grid">
             {articles.map(a => {

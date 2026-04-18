@@ -20,6 +20,7 @@ _LIST_FIELDS = {
     "score_reason", "review_status", "cms_id", "published_strategy",
     "auto_publish_enabled", "publish_stage", "broadcasted_at",
 }
+AUTO_CANDIDATE_SOURCE = "auto_candidates"
 
 
 def _is_public_stage(article: dict) -> bool:
@@ -40,7 +41,7 @@ def _excluded_article_sources(request: Request) -> list[str]:
 @router.get("/articles")
 def list_articles(
     request: Request,
-    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|chaincatcher|odaily|all)$"),
+    source: str = Query("all", pattern="^(stcn|techflow|blockbeats|chaincatcher|odaily|auto_candidates|all)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort_by: str = Query("time", pattern="^(time|score)$"),
@@ -49,6 +50,9 @@ def list_articles(
     svc = request.app.state.pipeline_service
 
     if svc.database:
+        if source == AUTO_CANDIDATE_SOURCE:
+            return _list_auto_candidate_articles(request, page=page, page_size=page_size, sort_by=sort_by)
+
         excluded_sources = _excluded_article_sources(request)
         total = svc.database.count_articles(
             source_key=source,
@@ -79,6 +83,75 @@ def list_articles(
         result.append({k: a[k] for k in _LIST_FIELDS if k in a})
 
     return {"total": total, "page": page, "page_size": page_size, "articles": result}
+
+
+def _list_auto_candidate_articles(request: Request, page: int, page_size: int, sort_by: str) -> dict:
+    """List current-window auto-publish candidates for the article page."""
+    svc = request.app.state.pipeline_service
+    scheduler = getattr(svc, "auto_publish_scheduler", None)
+
+    if not svc.database or not scheduler:
+        return {
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "articles": [],
+            "auto_candidate_window": None,
+        }
+
+    context = scheduler.get_window_context()
+    pushed_in_window = svc.database.count_pushes_in_window(context["window_start"], strategy="auto")
+    if pushed_in_window > 0:
+        return {
+            "total": 0,
+            "page": page,
+            "page_size": page_size,
+            "articles": [],
+            "auto_candidate_window": {
+                "window_start": context["window_start"].isoformat(),
+                "window_end": context["window_end"].isoformat(),
+                "min_score": context["min_score"],
+                "auto_sources": context["auto_sources"],
+                "is_morning": context["is_morning"],
+                "window_full": True,
+                "pushed_in_window": pushed_in_window,
+            },
+        }
+
+    candidates = svc.database.get_auto_publish_broadcast_candidates(
+        min_score=context["min_score"],
+        limit=None,
+        source_keys=context["auto_sources"],
+        window_start=context["window_start"],
+        window_end=context["window_end"],
+        sort_by=sort_by,
+    )
+
+    total = len(candidates)
+    start = max(0, (page - 1) * page_size)
+    page_items = candidates[start:start + page_size]
+
+    result = []
+    for article in page_items:
+        article["published"] = _is_public_stage(article)
+        ArticleStore.enrich_article(article)
+        result.append({k: article[k] for k in _LIST_FIELDS if k in article})
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "articles": result,
+        "auto_candidate_window": {
+            "window_start": context["window_start"].isoformat(),
+            "window_end": context["window_end"].isoformat(),
+            "min_score": context["min_score"],
+            "auto_sources": context["auto_sources"],
+            "is_morning": context["is_morning"],
+            "window_full": False,
+            "pushed_in_window": pushed_in_window,
+        },
+    }
 
 
 @router.get("/articles/{article_id}")
@@ -314,12 +387,13 @@ def broadcast_article(request: Request, article_id: str, _admin=Depends(require_
 
     try:
         result = svc.broadcast_article(article, strategy="manual")
+        push_label = svc.get_push_label(article.get("score"))
         return {
             "ok": True,
             "article_id": article_id,
             "cms_id": article.get("cms_id"),
             "title": article.get("title", ""),
-            "push_label": "爆文" if (article.get("score") or 0) >= 85 else "热文",
+            "push_label": push_label or (article.get("title", "") or "")[:120],
             "publish_stage": "broadcasted",
         }
     except Exception as e:

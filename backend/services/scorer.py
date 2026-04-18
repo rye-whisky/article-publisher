@@ -114,7 +114,7 @@ class ScorerService:
 
         if score < 60:
             return "low_priority", False
-        if score < 70:
+        if score <= 70:
             return "manual_review", False
         if score < 75:
             return "auto_candidate", False  # 存草稿，不自动发

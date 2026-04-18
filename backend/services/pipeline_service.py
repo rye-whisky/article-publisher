@@ -346,9 +346,9 @@ class PipelineService:
             article_category=score_result.get("article_category"),
         )
 
-        # Auto-save CMS draft for 70+ scored articles
+        # Auto-save CMS draft for scores above 70
         score = score_result["score"]
-        if score is not None and score >= 70:
+        if score is not None and score > 70:
             # LLM 优化文章（如果启用）
             enable_llm_optimization = self.database.get_setting("llm_optimization_enabled") == "true"
             enable_author_info = self.database.get_setting("llm_author_info_enabled") == "true"
@@ -380,8 +380,23 @@ class PipelineService:
         return {
             "metrics": self.database.get_source_metrics(self.get_managed_source_keys()),
             "scheduler": self.auto_publish_scheduler.get_status() if self.auto_publish_scheduler else {},
-            "broadcast": self.auto_publish_scheduler.get_status() if self.auto_publish_scheduler else {},
+            "broadcast": self.broadcast_scheduler.get_status() if self.broadcast_scheduler else {},
         }
+
+    @staticmethod
+    def get_push_label(score: int | None) -> str:
+        """Map an article score to the app push label."""
+        if score is None:
+            return ""
+        try:
+            numeric_score = int(score)
+        except (TypeError, ValueError):
+            return ""
+        if numeric_score >= 85:
+            return "爆文"
+        if numeric_score >= 75:
+            return "热文"
+        return ""
 
     def _merge_database_article_fields(self, article: dict) -> dict:
         """Merge CMS-related fields from the database before a CMS submit."""
@@ -437,12 +452,12 @@ class PipelineService:
             raise RuntimeError("Article must be published (have cms_id) before broadcast")
 
         score = article.get("score") or 0
-        push_label = "爆文" if score >= 85 else "热文"
+        push_label = self.get_push_label(score)
 
         result = self.publisher.push_to_app(
             cms_id=cms_id,
             title=article.get("title", ""),
-            push_label=push_label if strategy == "auto" else "",
+            push_label=push_label,
         )
 
         if self.database:
@@ -451,7 +466,7 @@ class PipelineService:
                 article_id=article["article_id"],
                 source_key=article.get("source_key", ""),
                 cms_id=cms_id,
-                push_title=push_label if strategy == "auto" else (article.get("title", "") or "")[:120],
+                push_title=push_label or (article.get("title", "") or "")[:120],
                 score=score,
                 strategy=strategy,
                 result="ok",
@@ -459,7 +474,7 @@ class PipelineService:
 
         return result
 
-    def auto_publish_and_broadcast(self, article: dict, push_label: str = "热文") -> dict:
+    def auto_publish_and_broadcast(self, article: dict, push_label: str = "") -> dict:
         """Atomic: publish article to CMS then broadcast to App.
 
         Used by AutoPublishScheduler for the unified publish+push flow.
@@ -485,7 +500,7 @@ class PipelineService:
         push_result = self.publisher.push_to_app(
             cms_id=cms_id,
             title=article.get("title", ""),
-            push_label=push_label,
+            push_label=push_label or self.get_push_label(prepared.get("score")),
         )
 
         if self.database:
@@ -494,7 +509,7 @@ class PipelineService:
                 article_id=prepared["article_id"],
                 source_key=prepared.get("source_key", ""),
                 cms_id=cms_id,
-                push_title=push_label,
+                push_title=push_label or self.get_push_label(prepared.get("score")) or (article.get("title", "") or "")[:120],
                 score=prepared.get("score"),
                 strategy="auto",
                 result="ok",

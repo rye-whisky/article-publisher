@@ -102,6 +102,12 @@ export const translations = {
     sortBy: '排序',
     sortByTime: '按时间',
     sortByScore: '按分数',
+    autoCandidates: '\u81ea\u52a8\u5019\u9009\u6c60',
+    autoCandidateWindow: '\u5f53\u524d\u81ea\u52a8\u5019\u9009\u7a97\u53e3',
+    autoCandidateThreshold: '\u5165\u6c60\u9608\u503c',
+    autoCandidateSources: '\u81ea\u52a8\u4fe1\u6e90',
+    noAutoCandidatesFound: '\u5f53\u524d\u65f6\u95f4\u7a97\u6682\u65e0\u81ea\u52a8\u5019\u9009\u6587\u7ae0',
+    autoCandidateWindowCompleted: '\u5f53\u524d\u65f6\u95f4\u7a97\u7684\u81ea\u52a8\u53d1\u5e03\u4efb\u52a1\u5df2\u5b8c\u6210',
 
     // Logs
     lines: '行',
@@ -322,6 +328,12 @@ export const translations = {
     sortBy: 'Sort',
     sortByTime: 'By Time',
     sortByScore: 'By Score',
+    autoCandidates: 'Auto Pool',
+    autoCandidateWindow: 'Current Auto Window',
+    autoCandidateThreshold: 'Threshold',
+    autoCandidateSources: 'Auto Sources',
+    noAutoCandidatesFound: 'No auto-candidate articles in the current window',
+    autoCandidateWindowCompleted: 'The current auto-publish window has already been completed',
     lines: 'lines',
 
     lightMode: 'Light Mode',

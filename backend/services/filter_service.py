@@ -27,7 +27,7 @@ class FilterService:
         {"pattern": "Telegram订阅群", "match_type": "keyword", "field": "content", "action": "tail_cut"},
         {"pattern": "Twitter官方账号", "match_type": "keyword", "field": "content", "action": "tail_cut"},
         {"pattern": "欢迎加入律动 BlockBeats 官方社群", "match_type": "keyword", "field": "content", "action": "tail_cut", "source_key": "blockbeats"},
-        {"pattern": "点击了解律动BlockBeats 在招岗位", "match_type": "keyword", "field": "content", "action": "tail_cut", "source_key": "blockbeats"},
+        {"pattern": "点击了解律动 BlockBeats 在招岗位", "match_type": "keyword", "field": "content", "action": "tail_cut", "source_key": "blockbeats"},
     ]
 
     def __init__(self, database: ArticleDatabase):
@@ -76,7 +76,12 @@ class FilterService:
                 }
         return None
 
-    def check_duplicate(self, source_keys: list[str], title: str, exclude_article_id: str | None = None) -> tuple[str, Optional[dict]]:
+    def check_duplicate(
+        self,
+        source_keys: list[str],
+        title: str,
+        exclude_article_id: str | None = None,
+    ) -> tuple[str, Optional[dict]]:
         """Return normalized duplicate key and the already-stored duplicate article if found."""
         duplicate_key = self.build_duplicate_key(title)
         if not duplicate_key:
@@ -164,54 +169,107 @@ class FilterService:
 
     @staticmethod
     def _clean_preamble(blocks: list[dict]) -> list[dict]:
-        """Remove pull quotes and relocate attribution lines from article start.
-
-        Rules applied to consecutive leading text blocks:
-          - Pull quotes (entire text wrapped in "" or "") → DELETE
-          - Attribution/metadata lines → MOVE to end of article
-          - First "real" content block stops the preamble scan
-        """
+        """Remove obvious preamble noise while preserving the real opening paragraph."""
         if not blocks:
             return blocks
 
-        # Patterns for attribution/metadata that should move to end
-        _ATTRIB_RE = re.compile(
-            r'^(?:整理\s*[&＆]\s*编译|编译\s*[：:]|嘉宾\s*[：:]|主持人\s*[：:]'
-            r'|播客源\s*[：:]|原标题\s*[：:]|播出日期\s*[：:]|来源\s*[：:]'
-            r'|作者\s*[：:]|文稿整理|文字整理)',
-        )
-        # Pull quote: entire text wrapped in Chinese curly quotes or straight quotes
-        _PULL_QUOTE_RE = re.compile(r'^[\u201c"].+[\u201d"]$')
-
-        preamble_meta = []  # blocks to relocate
-        content_start = 0
-
-        for i, block in enumerate(blocks):
+        leading_entries: list[tuple[int, dict, str]] = []
+        for index, block in enumerate(blocks):
             if block.get("type") == "img":
-                break  # image stops preamble scan
+                break
             text = (block.get("text") or "").strip()
             if not text:
                 continue
+            leading_entries.append((index, block, text))
+            if len(leading_entries) >= 6:
+                break
 
-            if _PULL_QUOTE_RE.match(text):
-                # Pull quote → skip (delete)
+        if not leading_entries:
+            return blocks
+
+        remove_indices: set[int] = set()
+        move_to_end: list[tuple[int, dict]] = []
+        moved_indices: set[int] = set()
+
+        for index, _, text in leading_entries[:4]:
+            if FilterService._is_pull_quote(text):
+                remove_indices.add(index)
+
+        first_content_position = None
+        for position, (index, _, text) in enumerate(leading_entries):
+            if index in remove_indices:
                 continue
-
-            if _ATTRIB_RE.match(text):
-                # Attribution → collect for moving to end
-                preamble_meta.append(block)
+            if FilterService._is_attribution_line(text):
                 continue
-
-            # First block that's neither pull quote nor attribution → real content
-            content_start = i
+            first_content_position = position
             break
-        else:
-            # All blocks were preamble (unlikely but handle it)
+
+        if first_content_position is not None:
+            first_index, _, first_text = leading_entries[first_content_position]
+            next_entry_is_attribution = False
+            for _, _, next_text in leading_entries[first_content_position + 1:first_content_position + 3]:
+                if FilterService._is_pull_quote(next_text):
+                    continue
+                next_entry_is_attribution = FilterService._is_attribution_line(next_text)
+                break
+            if next_entry_is_attribution and FilterService._is_leading_teaser_line(first_text):
+                remove_indices.add(first_index)
+
+        for index, block, text in leading_entries[:4]:
+            if index in remove_indices:
+                continue
+            if not FilterService._is_attribution_line(text):
+                continue
+            remove_indices.add(index)
+            if index not in moved_indices:
+                move_to_end.append((index, block))
+                moved_indices.add(index)
+
+        if not remove_indices:
             return blocks
 
-        if not preamble_meta:
-            return blocks
+        remaining = [block for idx, block in enumerate(blocks) if idx not in remove_indices]
+        if move_to_end:
+            if remaining and remaining[-1].get("type") != "img":
+                remaining.append({"type": "p", "text": ""})
+            remaining.extend(block for _, block in move_to_end)
+        return remaining
 
-        # Remove preamble meta blocks, then append them at the end
-        remaining = [b for b in blocks if b not in preamble_meta]
-        return remaining + preamble_meta
+    @staticmethod
+    def _is_pull_quote(text: str) -> bool:
+        normalized = (text or "").strip()
+        return bool(normalized and re.fullmatch(r'[\u201c"].+[\u201d"]', normalized))
+
+    @staticmethod
+    def _is_attribution_line(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", (text or "").strip())
+        if not normalized:
+            return False
+        return re.match(
+            r"^(?:作者|原文作者|撰文|编译|原文编译|译者|编辑|编辑整理|文字整理|文稿整理|来源|原标题|播出日期|嘉宾|主持人|采访|整理)\s*[:：]",
+            normalized,
+            flags=re.IGNORECASE,
+        ) is not None
+
+    @staticmethod
+    def _is_leading_teaser_line(text: str) -> bool:
+        """Detect a very short teaser line before attribution metadata."""
+        normalized = re.sub(r"\s+", " ", (text or "").strip())
+        if not normalized:
+            return False
+        if len(normalized) < 8 or len(normalized) > 28:
+            return False
+        if not re.search(r"[。！？?!]$", normalized):
+            return False
+        if FilterService._is_attribution_line(normalized):
+            return False
+        if re.search(r"[:：]|https?://|www\.", normalized):
+            return False
+        if re.search(r"\d", normalized):
+            return False
+        if re.match(
+            r"^(?:过去|目前|今日|今天|近日|近期|首先|随着|根据|由于|自|从|在|当|对于|如果|今年|本周)",
+            normalized,
+        ):
+            return False
+        return len(re.findall(r"[\u4e00-\u9fff]", normalized)) >= 8

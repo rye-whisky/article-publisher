@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 """Workflow routes: blocklist CRUD and auto-publish status."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from routes.auth import require_admin
 
 router = APIRouter(prefix="/api", tags=["workflow"])
+log = logging.getLogger("pipeline")
 
 
 @router.get("/blocklist")
@@ -65,11 +68,11 @@ def run_push_check(request: Request, _admin=Depends(require_admin)):
 
 @router.post("/workflow/broadcast-check")
 def run_broadcast_check(request: Request, _admin=Depends(require_admin)):
-    """Trigger a single auto-publish + broadcast cycle manually (alias for push-check)."""
+    """Trigger a single broadcast-only cycle for already published articles."""
     svc = request.app.state.pipeline_service
-    if not svc.auto_publish_scheduler:
-        raise HTTPException(501, "Auto-publish scheduler not configured")
-    return svc.auto_publish_scheduler.run_once()
+    if not svc.broadcast_scheduler:
+        raise HTTPException(501, "Broadcast scheduler not configured")
+    return svc.broadcast_scheduler.run_once()
 
 
 @router.post("/workflow/rescore-unscored")
@@ -118,9 +121,9 @@ def rescore_unscored_articles(request: Request, _admin=Depends(require_admin)):
                 article_category=score_result.get("article_category"),
             )
 
-            # Auto-save CMS draft for 70+ scored articles
+            # Auto-save CMS draft for scores above 70
             score = score_result["score"]
-            if score is not None and score >= 70:
+            if score is not None and score > 70:
                 # LLM 优化文章（如果启用）
                 if enable_llm_optimization:
                     try:

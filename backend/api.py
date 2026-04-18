@@ -9,7 +9,6 @@ All business logic lives in services/, pipelines/, routes/.
 import asyncio
 import logging
 import os
-import yaml
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from middleware.auth import AuthMiddleware
 from services.pipeline_service import PipelineService
 from services.ai_pipeline_service import AiPipelineService
 from services.database import get_database
+from config.loader import load_config
 from utils.logging_config import setup_logging, get_broadcaster
 
 # ---------------------------------------------------------------------------
@@ -44,8 +44,7 @@ async def lifespan(app: FastAPI):
     """Manage application startup and shutdown."""
     # Load config and init auth
     config_path = BASE_DIR / "config.yaml"
-    with open(config_path, encoding="utf-8") as f:
-        config = yaml.safe_load(f)
+    config = load_config(config_path)
 
     # Init database
     db_path = config.get("database", {}).get("sqlite_path", "data/articles.db")
@@ -74,6 +73,8 @@ async def lifespan(app: FastAPI):
     #     svc.push_scheduler.start()
     if svc.auto_publish_scheduler:
         svc.auto_publish_scheduler.start()
+    if svc.broadcast_scheduler:
+        svc.broadcast_scheduler.start()
 
     # Set default schedules for sources without saved config (10-20 min)
     # Blockchain sources: 15 min default

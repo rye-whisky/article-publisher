@@ -1,49 +1,100 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""远程部署脚本 - 从 Windows 本地部署到阿里云服务器"""
+"""Remote deployment helper for Article Publisher."""
+
+from __future__ import annotations
 
 import os
 import sys
 import time
-import paramiko
 from pathlib import Path
 
+import paramiko
 
-# 服务器配置 - 密钥从环境变量读取
+
 SERVER = {
-    "host": os.environ.get("DEPLOY_HOST", ""),
+    "host": os.environ.get("DEPLOY_HOST", "").strip(),
     "port": int(os.environ.get("DEPLOY_PORT", "22")),
-    "username": os.environ.get("DEPLOY_USER", ""),
+    "username": os.environ.get("DEPLOY_USER", "root").strip() or "root",
     "password": os.environ.get("DEPLOY_PASSWORD", ""),
-    "key_filename": os.environ.get("DEPLOY_KEY_FILE", ""),
+    "key_filename": os.environ.get("DEPLOY_KEY_FILE", "").strip(),
 }
 
 APP_DIR = "/opt/article-publisher"
 BACKEND_PORT = 8001
 NGINX_PORT = 8081
-PYTHON_BIN = "python3.11"  # 服务器上的 Python 版本
 
 
 def check_env():
-    """检查环境变量"""
-    if not SERVER["password"] and not SERVER["key_filename"]:
-        print("[!] 错误: 请设置 DEPLOY_PASSWORD 或 DEPLOY_KEY_FILE")
+    """Validate required deployment configuration."""
+    if not SERVER["host"]:
+        print("[!] Error: set DEPLOY_HOST before running this script")
+        print("    Example: DEPLOY_HOST=120.24.177.45 DEPLOY_KEY_FILE=/path/to/key.pem python deploy_remote.py")
         sys.exit(1)
-    print(f"[*] 目标服务器: {SERVER['host']}:{SERVER['port']} (用户: {SERVER['username']})")
+    if not SERVER["password"] and not SERVER["key_filename"]:
+        print("[!] Error: set DEPLOY_KEY_FILE or DEPLOY_PASSWORD before running this script")
+        sys.exit(1)
+    print(f"[*] Target server: {SERVER['host']}:{SERVER['port']} (user: {SERVER['username']})")
 
 
-def run_cmd(ssh, command: str, timeout: int = 120) -> tuple[str, str]:
-    """执行 SSH 命令，返回 (stdout, stderr)"""
+def connect_ssh() -> paramiko.SSHClient:
+    """Create an SSH session using key auth first, then password if available."""
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    attempts: list[tuple[str, dict]] = []
+    if SERVER["key_filename"]:
+        attempts.append((
+            "key",
+            {
+                "hostname": SERVER["host"],
+                "port": SERVER["port"],
+                "username": SERVER["username"],
+                "key_filename": os.path.expanduser(SERVER["key_filename"]),
+                "look_for_keys": False,
+                "allow_agent": False,
+                "timeout": 15,
+            },
+        ))
+    if SERVER["password"]:
+        attempts.append((
+            "password",
+            {
+                "hostname": SERVER["host"],
+                "port": SERVER["port"],
+                "username": SERVER["username"],
+                "password": SERVER["password"],
+                "look_for_keys": False,
+                "allow_agent": False,
+                "timeout": 15,
+            },
+        ))
+
+    last_error: Exception | None = None
+    for method, kwargs in attempts:
+        try:
+            ssh.connect(**kwargs)
+            print(f"  [+] Connected with {method} authentication")
+            return ssh
+        except Exception as exc:  # pragma: no cover - deployment helper
+            last_error = exc
+
+    print(f"[!] Connection failed: {last_error}")
+    sys.exit(1)
+
+
+def run_cmd(ssh: paramiko.SSHClient, command: str, timeout: int = 120) -> tuple[str, str]:
+    """Execute an SSH command and return stdout/stderr."""
     stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
     out = stdout.read().decode().strip()
     err = stderr.read().decode().strip()
-    if err and "WARNING" not in err:
-        print(f"  [stderr] {err[:200]}")
+    if err and "warning" not in err.lower():
+        print(f"  [stderr] {err[:300]}")
     return out, err
 
 
-def upload_dir(sftp, ssh, local_dir: Path, remote_dir: str, exclude=None):
-    """递归上传目录"""
+def upload_dir(sftp, ssh: paramiko.SSHClient, local_dir: Path, remote_dir: str, exclude=None):
+    """Recursively upload a directory to the target host."""
     if exclude is None:
         exclude = {"__pycache__", ".pyc", "node_modules", ".git"}
 
@@ -53,7 +104,6 @@ def upload_dir(sftp, ssh, local_dir: Path, remote_dir: str, exclude=None):
             continue
 
         remote_path = f"{remote_dir}/{name}"
-
         if item.is_dir():
             run_cmd(ssh, f"mkdir -p {remote_path}")
             upload_dir(sftp, ssh, item, remote_path, exclude)
@@ -63,111 +113,58 @@ def upload_dir(sftp, ssh, local_dir: Path, remote_dir: str, exclude=None):
 
 
 def deploy():
-    """远程部署主流程"""
+    """Deploy the local project to the configured remote server."""
     check_env()
 
-    # 连接服务器
-    print("[*] 连接服务器...")
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
-    # 尝试多种认证方式
-    connected = False
-    last_error = None
-
-    # 1. 尝试指定密钥文件
-    if SERVER["key_filename"]:
-        try:
-            key_path = os.path.expanduser(SERVER["key_filename"])
-            ssh.connect(
-                hostname=SERVER["host"],
-                port=SERVER["port"],
-                username=SERVER["username"],
-                key_filename=key_path,
-                timeout=15,
-            )
-            connected = True
-            print("  [+] 使用指定密钥认证成功")
-        except Exception as e:
-            last_error = e
-
-    # 2. 尝试密码认证
-    if not connected and SERVER["password"]:
-        try:
-            ssh.connect(
-                hostname=SERVER["host"],
-                port=SERVER["port"],
-                username=SERVER["username"],
-                password=SERVER["password"],
-                timeout=15,
-            )
-            connected = True
-            print("  [+] 使用密码认证成功")
-        except Exception as e:
-            last_error = e
-
-    if not connected:
-        print(f"[!] 连接失败: {last_error}")
-        sys.exit(1)
-
+    print("[*] Connecting to server...")
+    ssh = connect_ssh()
     local_root = Path(__file__).resolve().parent.parent
 
     try:
-        # ===== Step 1: 创建目录 =====
-        print("\n[1/7] 创建远程目录...")
+        print("\n[1/7] Preparing remote directories...")
         run_cmd(ssh, f"mkdir -p {APP_DIR}/{{logs,data,output,backend,frontend/dist,deploy}}")
 
-        # ===== Step 2: 上传文件 =====
-        print("\n[2/7] 上传项目文件...")
+        print("\n[2/7] Uploading project files...")
         sftp = ssh.open_sftp()
 
-        # 上传 backend/
-        print("  上传 backend/...")
+        print("  Uploading backend/ ...")
         upload_dir(sftp, ssh, local_root / "backend", f"{APP_DIR}/backend")
 
-        # 上传 frontend/dist/ (必须已 build)
         dist_dir = local_root / "frontend" / "dist"
         if dist_dir.exists() and any(dist_dir.iterdir()):
-            print("  上传 frontend/dist/...")
+            print("  Uploading frontend/dist/ ...")
             upload_dir(sftp, ssh, dist_dir, f"{APP_DIR}/frontend/dist")
         else:
-            print("  [!] 前端未构建！请先运行: cd frontend && npm run build")
+            print("  [!] Frontend build is missing. Run `cd frontend && npm run build` first.")
             sys.exit(1)
 
-        # 上传 config.yaml
-        print("  上传 config.yaml...")
+        print("  Uploading config.yaml ...")
         sftp.put(str(local_root / "config.yaml"), f"{APP_DIR}/config.yaml")
 
-        # 上传 requirements.txt
-        print("  上传 requirements.txt...")
+        print("  Uploading requirements.txt ...")
         sftp.put(str(local_root / "requirements.txt"), f"{APP_DIR}/requirements.txt")
 
-        # 上传 deploy/ (nginx.conf, logging.ini)
-        print("  上传 deploy/...")
+        print("  Uploading deploy/ ...")
         upload_dir(sftp, ssh, local_root / "deploy", f"{APP_DIR}/deploy")
-
         sftp.close()
 
-        # ===== Step 3: Python 虚拟环境 =====
-        print("\n[3/7] 设置 Python 环境...")
-        # 重建虚拟环境（使用 python3.11）
-        print("  创建虚拟环境...")
-        run_cmd(ssh, f"rm -rf {APP_DIR}/venv")
-        run_cmd(ssh, f"{PYTHON_BIN} -m venv {APP_DIR}/venv", timeout=60)
+        print("\n[3/7] Setting up Python environment...")
+        venv_exists = run_cmd(ssh, f"test -d {APP_DIR}/venv && echo EXISTS")[0]
+        if venv_exists != "EXISTS":
+            print("  Creating virtualenv ...")
+            run_cmd(ssh, f"python3 -m venv {APP_DIR}/venv", timeout=60)
+        else:
+            print("  Virtualenv already exists, reusing it")
 
-        print("  升级 pip...")
+        print("  Installing dependencies ...")
         run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install --upgrade pip", timeout=120)
-
-        print("  安装依赖...")
         run_cmd(ssh, f"{APP_DIR}/venv/bin/pip install -r {APP_DIR}/requirements.txt", timeout=300)
 
-        # ===== Step 4: 创建系统用户 =====
-        print("\n[4/7] 配置系统用户...")
-        run_cmd(ssh, "id -u article-publisher &>/dev/null || useradd -r -s /bin/false article-publisher")
+        print("\n[4/7] Configuring system user...")
+        run_cmd(ssh, "id -u article-publisher >/dev/null 2>&1 || useradd -r -s /bin/false article-publisher")
         run_cmd(ssh, f"chown -R article-publisher:article-publisher {APP_DIR}")
 
-        # ===== Step 5: systemd 服务 =====
-        print("\n[5/7] 配置 systemd 服务...")
+        print("\n[5/7] Updating systemd service...")
         service_content = f"""[Unit]
 Description=Article Publisher API Service
 After=network.target
@@ -176,84 +173,68 @@ After=network.target
 Type=simple
 User=article-publisher
 Group=article-publisher
-WorkingDirectory={APP_DIR}/backend
+WorkingDirectory={APP_DIR}
 Environment="PATH={APP_DIR}/venv/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart={APP_DIR}/venv/bin/uvicorn api:app \\
+ExecStart={APP_DIR}/venv/bin/uvicorn backend.api:app \\
     --host 0.0.0.0 \\
     --port {BACKEND_PORT} \\
-    --workers 1
+    --workers 1 \\
+    --log-config {APP_DIR}/deploy/logging.ini
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-
-# 资源限制
 MemoryMax=1G
 MemoryHigh=800M
 CPUQuota=150%
-
-# 安全加固
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths={APP_DIR} {APP_DIR}/backend
+ReadWritePaths={APP_DIR}
 
 [Install]
 WantedBy=multi-user.target
 """
-        # 写入 service 文件
         sftp = ssh.open_sftp()
-        with sftp.file("/tmp/article-publisher.service", "w") as f:
-            f.write(service_content)
+        with sftp.file("/tmp/article-publisher.service", "w") as handle:
+            handle.write(service_content)
         sftp.close()
         run_cmd(ssh, "mv /tmp/article-publisher.service /etc/systemd/system/article-publisher.service")
         run_cmd(ssh, "systemctl daemon-reload")
 
-        # ===== Step 6: Nginx 配置 =====
-        print("\n[6/7] 配置 Nginx...")
-        # 上传 nginx 配置
+        print("\n[6/7] Updating Nginx config...")
         sftp = ssh.open_sftp()
-        nginx_src = str(local_root / "deploy" / "nginx.conf")
-        sftp.put(nginx_src, "/tmp/article-publisher-nginx.conf")
+        sftp.put(str(local_root / "deploy" / "nginx.conf"), "/tmp/article-publisher-nginx.conf")
         sftp.close()
-
-        run_cmd(ssh, "cp /tmp/article-publisher-nginx.conf /etc/nginx/conf.d/article-publisher.conf")
-        test_result = run_cmd(ssh, "nginx -t")[1]
-        if "test is successful" not in test_result and "syntax is ok" not in test_result:
-            print(f"  [!] Nginx 配置测试失败: {test_result}")
+        run_cmd(ssh, "cp /tmp/article-publisher-nginx.conf /etc/nginx/sites-available/article-publisher")
+        run_cmd(ssh, "ln -sf /etc/nginx/sites-available/article-publisher /etc/nginx/sites-enabled/article-publisher")
+        _, nginx_err = run_cmd(ssh, "nginx -t")
+        if "test is successful" not in nginx_err and "syntax is ok" not in nginx_err:
+            print(f"  [!] Nginx config test did not report success: {nginx_err[:300]}")
         else:
-            print("  Nginx 配置测试通过")
+            print("  Nginx config test passed")
         run_cmd(ssh, "systemctl reload nginx")
 
-        # ===== Step 7: 启动服务 =====
-        print("\n[7/7] 启动服务...")
+        print("\n[7/7] Restarting service...")
         run_cmd(ssh, "systemctl restart article-publisher")
         time.sleep(3)
-
-        # 检查状态
         status = run_cmd(ssh, "systemctl is-active article-publisher")[0]
         if "active" in status:
-            print(f"\n{'='*40}")
-            print(f"[+] 部署成功！")
-            print(f"{'='*40}")
-            print(f"  后端: http://{SERVER['host']}:{BACKEND_PORT}")
-            print(f"  Nginx: http://{SERVER['host']}:{NGINX_PORT}")
-            print(f"  API 状态: http://{SERVER['host']}:{BACKEND_PORT}/api/status")
-            print(f"  前端: http://{SERVER['host']}:{NGINX_PORT}")
-
-            # 验证 API
-            print(f"\n验证 API...")
+            print("\n========================================")
+            print("[+] Deployment succeeded")
+            print("========================================")
+            print(f"  Backend: http://{SERVER['host']}:{BACKEND_PORT}")
+            print(f"  Nginx:   http://{SERVER['host']}:{NGINX_PORT}")
             api_check = run_cmd(ssh, f"curl -s http://localhost:{BACKEND_PORT}/api/status")[0]
-            print(f"  /api/status → {api_check[:100]}")
+            print(f"  /api/status -> {api_check[:120]}")
         else:
-            print(f"\n[!] 服务启动失败 (status: {status})")
-            print("查看日志:")
-            logs = run_cmd(ssh, "journalctl -u article-publisher -n 30 --no-pager")[0]
+            print(f"\n[!] Service failed to start (status: {status})")
+            logs = run_cmd(ssh, "journalctl -u article-publisher -n 50 --no-pager")[0]
             print(logs)
-
+            sys.exit(1)
     finally:
         ssh.close()
 

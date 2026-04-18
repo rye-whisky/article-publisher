@@ -1120,14 +1120,47 @@ class ArticleDatabase:
         ).fetchone()
         return row is not None
 
-    def get_recent_broadcasted_titles(self, limit: int = 6) -> list[str]:
+    def get_recent_broadcasted_titles(self, limit: int = 6, strategy: str | None = None) -> list[str]:
         """Return titles of the most recently broadcasted articles."""
+        conn = self._get_conn()
+        if strategy:
+            rows = conn.execute(
+                """
+                SELECT a.title
+                FROM broadcast_history bh
+                JOIN articles a ON a.article_id = bh.article_id
+                WHERE bh.strategy = ?
+                ORDER BY bh.pushed_at DESC
+                LIMIT ?
+                """,
+                (strategy, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT a.title
+                FROM broadcast_history bh
+                JOIN articles a ON a.article_id = bh.article_id
+                ORDER BY bh.pushed_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [row["title"] for row in rows if row["title"]]
+
+    def get_recent_auto_publish_broadcast_titles(self, limit: int = 6) -> list[str]:
+        """Return titles from the latest auto-published and auto-broadcasted articles."""
         conn = self._get_conn()
         rows = conn.execute(
             """
-            SELECT a.title FROM broadcast_history bh
-            JOIN articles a ON a.article_id = bh.article_id
-            ORDER BY bh.pushed_at DESC
+            SELECT title
+            FROM articles
+            WHERE title IS NOT NULL
+              AND title != ''
+              AND published_strategy = 'auto'
+              AND broadcast_strategy = 'auto'
+              AND publish_stage = 'broadcasted'
+            ORDER BY COALESCE(broadcasted_at, published_at, updated_at, created_at) DESC
             LIMIT ?
             """,
             (limit,),
@@ -1233,8 +1266,11 @@ class ArticleDatabase:
     def get_auto_publish_broadcast_candidates(
         self,
         min_score: int = 75,
-        limit: int = 1,
+        limit: int | None = 1,
         source_keys: list[str] | None = None,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
+        sort_by: str = "score",
     ) -> list[dict]:
         """Get unpublished articles ready for auto publish + broadcast.
 
@@ -1258,30 +1294,57 @@ class ArticleDatabase:
         if not source_keys:
             return []
 
+        allowed_sources: list[str] = []
+        seen_sources: set[str] = set()
+        for item in source_keys:
+            key = (item or "").strip()
+            if not key or key in seen_sources or key in self.AUTO_PUBLISH_EXCLUDED_SOURCES:
+                continue
+            seen_sources.add(key)
+            allowed_sources.append(key)
+
+        if not allowed_sources:
+            return []
+
         conn = self._get_conn()
-        placeholders = ",".join("?" * len(source_keys))
-        rows = conn.execute(
-            f"""
+        placeholders = ",".join("?" * len(allowed_sources))
+        timestamp_expr = (
+            "datetime(REPLACE(SUBSTR(COALESCE(NULLIF(scored_at, ''), NULLIF(created_at, ''), NULLIF(publish_time, '')), 1, 19), 'T', ' '))"
+        )
+        where_clauses = [
+            "COALESCE(publish_stage, 'local') IN ('local', 'draft')",
+            "filter_status = 'passed'",
+            "score IS NOT NULL",
+            "score >= ?",
+            f"source_key IN ({placeholders})",
+            "NOT EXISTS (SELECT 1 FROM push_history ph WHERE ph.article_id = articles.article_id AND ph.strategy = 'auto')",
+            "NOT EXISTS (SELECT 1 FROM broadcast_history bh WHERE bh.article_id = articles.article_id)",
+        ]
+        params: list[Any] = [min_score, *allowed_sources]
+
+        if window_start is not None:
+            where_clauses.append(f"{timestamp_expr} >= datetime(?)")
+            params.append(window_start.isoformat())
+        if window_end is not None:
+            where_clauses.append(f"{timestamp_expr} < datetime(?)")
+            params.append(window_end.isoformat())
+
+        if sort_by == "time":
+            order_by = f"{timestamp_expr} DESC, score DESC, created_at DESC"
+        else:
+            order_by = f"score DESC, {timestamp_expr} DESC, created_at DESC"
+
+        query = f"""
             SELECT *
             FROM articles
-            WHERE COALESCE(publish_stage, 'local') IN ('local', 'draft')
-              AND filter_status = 'passed'
-              AND score IS NOT NULL
-              AND score >= ?
-              AND source_key IN ({placeholders})
-              AND NOT EXISTS (
-                  SELECT 1 FROM push_history ph
-                  WHERE ph.article_id = articles.article_id AND ph.strategy = 'auto'
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM broadcast_history bh
-                  WHERE bh.article_id = articles.article_id
-              )
-            ORDER BY score DESC, created_at DESC
-            LIMIT ?
-            """,
-            (min_score, *source_keys, limit),
-        ).fetchall()
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY {order_by}
+        """
+        if limit is not None:
+            query += "\n            LIMIT ?"
+            params.append(limit)
+
+        rows = conn.execute(query, params).fetchall()
         return [self._row_to_dict(row) for row in rows]
 
     # ------------------------------------------------------------------
