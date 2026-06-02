@@ -277,6 +277,7 @@ class Publisher:
             "is_push_bian": 2,
             "content_pin_top": 0,
             "is_public": bool(is_public),
+            "is_good": bool(article.get("is_good", False)),
             "user_id": payload_user_id,
             "chain_fixed_publish_time": 0,
             "as_user_id": payload_user_id,

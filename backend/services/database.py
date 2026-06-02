@@ -91,6 +91,7 @@ class ArticleDatabase:
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 published_at TEXT,
                 cms_id TEXT,
+                is_good INTEGER DEFAULT 0,
                 broadcasted_at TEXT,
                 broadcast_strategy TEXT,
                 in_site_conflict_url TEXT,
@@ -211,6 +212,7 @@ class ArticleDatabase:
             "ALTER TABLE push_history ADD COLUMN in_site_article_title TEXT",
             "ALTER TABLE push_history ADD COLUMN in_site_article_published_at TEXT",
             "ALTER TABLE articles ADD COLUMN keywords TEXT",
+            "ALTER TABLE articles ADD COLUMN is_good INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(col_sql)
@@ -410,6 +412,7 @@ class ArticleDatabase:
             "updated_at": now,
             "published_at": article.get("published_at"),
             "cms_id": article.get("cms_id"),
+            "is_good": int(bool(article.get("is_good"))) if "is_good" in article else None,
         }
 
         conn.execute(
@@ -421,7 +424,7 @@ class ArticleDatabase:
                 filter_status, filter_reason, duplicate_key,
                 score_status, score_reason, review_status,
                 auto_publish_enabled, publish_stage, published_strategy, scored_at,
-                created_at, updated_at, published_at, cms_id
+                created_at, updated_at, published_at, cms_id, is_good
             ) VALUES (
                 :article_id, :source_key, :raw_id, :title, :source, :author,
                 :publish_time, :original_url, :cover_src, :blocks, :abstract,
@@ -429,7 +432,7 @@ class ArticleDatabase:
                 :filter_status, :filter_reason, :duplicate_key,
                 :score_status, :score_reason, :review_status,
                 :auto_publish_enabled, COALESCE(:publish_stage, 'local'), :published_strategy, :scored_at,
-                :created_at, :updated_at, :published_at, :cms_id
+                :created_at, :updated_at, :published_at, :cms_id, COALESCE(:is_good, 0)
             )
             ON CONFLICT(article_id) DO UPDATE SET
                 source_key = excluded.source_key,
@@ -462,7 +465,11 @@ class ArticleDatabase:
                 scored_at = COALESCE(excluded.scored_at, articles.scored_at),
                 updated_at = excluded.updated_at,
                 published_at = COALESCE(excluded.published_at, articles.published_at),
-                cms_id = COALESCE(excluded.cms_id, articles.cms_id)
+                cms_id = COALESCE(excluded.cms_id, articles.cms_id),
+                is_good = CASE
+                    WHEN :is_good IS NOT NULL THEN excluded.is_good
+                    ELSE articles.is_good
+                END
             """,
             payload,
         )
@@ -846,20 +853,64 @@ class ArticleDatabase:
         conn.commit()
         return cursor.rowcount > 0
 
-    def mark_published(self, article_id: str, cms_id: str, strategy: str = "manual") -> bool:
+    def mark_published(self, article_id: str, cms_id: str, strategy: str = "manual",
+                       is_good: bool | None = None) -> bool:
         """Mark article as publicly published."""
         conn = self._get_conn()
         now = datetime.now().isoformat()
-        cursor = conn.execute(
-            """
-            UPDATE articles
-            SET cms_id = ?, publish_stage = 'published', published_at = ?, published_strategy = ?, updated_at = ?
-            WHERE article_id = ?
-            """,
-            (cms_id, now, strategy, now, article_id),
-        )
+        if is_good is None:
+            cursor = conn.execute(
+                """
+                UPDATE articles
+                SET cms_id = ?, publish_stage = 'published', published_at = ?, published_strategy = ?, updated_at = ?
+                WHERE article_id = ?
+                """,
+                (cms_id, now, strategy, now, article_id),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE articles
+                SET cms_id = ?, publish_stage = 'published', published_at = ?,
+                    published_strategy = ?, is_good = ?, updated_at = ?
+                WHERE article_id = ?
+                """,
+                (cms_id, now, strategy, int(bool(is_good)), now, article_id),
+            )
         conn.commit()
         return cursor.rowcount > 0
+
+    def count_auto_published_after_last_good(self, strategy: str = "auto") -> int | None:
+        """Count successful auto publishes after the latest selected article."""
+        conn = self._get_conn()
+        last_good = conn.execute(
+            """
+            SELECT published_at
+            FROM articles
+            WHERE published_strategy = ?
+              AND COALESCE(is_good, 0) = 1
+              AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')
+              AND published_at IS NOT NULL
+            ORDER BY published_at DESC
+            LIMIT 1
+            """,
+            (strategy,),
+        ).fetchone()
+        if not last_good:
+            return None
+
+        row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM articles
+            WHERE published_strategy = ?
+              AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')
+              AND published_at IS NOT NULL
+              AND published_at > ?
+            """,
+            (strategy, last_good["published_at"]),
+        ).fetchone()
+        return row[0] if row else 0
 
     def mark_broadcasted(self, article_id: str, strategy: str = "manual") -> bool:
         """Mark article as broadcasted (app desktop push)."""
@@ -1689,6 +1740,7 @@ class ArticleDatabase:
             "auto_publish_enabled": bool(row["auto_publish_enabled"]) if "auto_publish_enabled" in row.keys() else False,
             "publish_stage": row["publish_stage"] if "publish_stage" in row.keys() and row["publish_stage"] else ("draft" if row["cms_id"] else "local"),
             "published_strategy": row["published_strategy"] if "published_strategy" in row.keys() else None,
+            "is_good": bool(row["is_good"]) if "is_good" in row.keys() else False,
             "scored_at": row["scored_at"] if "scored_at" in row.keys() else None,
             "broadcasted_at": row["broadcasted_at"] if "broadcasted_at" in row.keys() else None,
             "broadcast_strategy": row["broadcast_strategy"] if "broadcast_strategy" in row.keys() else None,

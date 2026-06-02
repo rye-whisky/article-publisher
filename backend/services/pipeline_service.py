@@ -603,6 +603,21 @@ class PipelineService:
             return "热文"
         return ""
 
+    def _should_auto_publish_as_good(self) -> bool:
+        """Allow one selected article only after two auto publishes since the last one."""
+        if not self.database:
+            return False
+        published_after_last_good = self.database.count_auto_published_after_last_good(strategy="auto")
+        return published_after_last_good is None or published_after_last_good >= 2
+
+    def _apply_auto_good_spacing(self, article: dict, strategy: str) -> dict:
+        """Set the ChainThink selected flag before an automatic public publish."""
+        if (strategy or "").strip().lower() != "auto":
+            return article
+        prepared = dict(article)
+        prepared["is_good"] = self._should_auto_publish_as_good()
+        return prepared
+
     def _merge_database_article_fields(self, article: dict) -> dict:
         """Merge CMS-related fields from the database before a CMS submit."""
         if not self.database:
@@ -654,7 +669,13 @@ class PipelineService:
         prepared["publish_stage"] = "published"
 
         if self.database:
-            self.database.mark_published(prepared["article_id"], result["cms_id"], strategy=strategy)
+            is_good = prepared.get("is_good") if "is_good" in prepared else None
+            self.database.mark_published(
+                prepared["article_id"],
+                result["cms_id"],
+                strategy=strategy,
+                is_good=is_good,
+            )
 
         state = self.load_state()
         published_ids = set(state.get("published_ids", []))
@@ -712,6 +733,7 @@ class PipelineService:
         """
         prepared = self._merge_database_article_fields(article)
         prepared = self._apply_column_routing(prepared, strategy)
+        prepared = self._apply_auto_good_spacing(prepared, strategy)
 
         # Clear any stale cms_id from a previous draft — CMS API creates a new article
         # when publishing, even if an existing cms_id is provided, causing duplicates.
@@ -738,7 +760,12 @@ class PipelineService:
         prepared["publish_stage"] = "published"
 
         if self.database:
-            self.database.mark_published(prepared["article_id"], cms_id, strategy=strategy)
+            self.database.mark_published(
+                prepared["article_id"],
+                cms_id,
+                strategy=strategy,
+                is_good=prepared.get("is_good"),
+            )
 
         state = self.load_state()
         published_ids = set(state.get("published_ids", []))
