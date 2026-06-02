@@ -59,6 +59,7 @@ def test_rwa_rule_adds_tag_and_route():
     assert routed["user_id"] == RWA_USER_ID
     assert routed["as_user_id"] == RWA_USER_ID
     assert RWA_TAG in routed["tags"]
+    assert routed["strong_content_tags"] == {"人工": [RWA_TAG]}
 
 
 def test_prediction_market_rule_routes_to_prediction_column():
@@ -119,6 +120,7 @@ def test_save_article_draft_persists_rwa_tag_to_database(tmp_path):
     assert result["cms_id"] == f"cms-{article['article_id']}"
     assert publisher.last_article["user_id"] == RWA_USER_ID
     assert publisher.last_article["as_user_id"] == RWA_USER_ID
+    assert publisher.last_article["strong_content_tags"] == {"人工": [RWA_TAG]}
     assert stored["tags"] == ["已有标签", RWA_TAG]
 
     db.close()

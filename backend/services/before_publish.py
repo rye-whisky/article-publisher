@@ -42,6 +42,19 @@ def _merge_tags(tags: Iterable[str] | None, *extra_tags: str) -> list[str]:
     return merged
 
 
+def _merge_strong_content_tags(
+    strong_content_tags: dict | None,
+    bucket: str,
+    *extra_tags: str,
+) -> dict:
+    """合并 ChainThink 的 strong_content_tags，保留已有分组。"""
+    merged: dict[str, list[str]] = {}
+    for key, values in dict(strong_content_tags or {}).items():
+        merged[str(key)] = _merge_tags(values)
+    merged[bucket] = _merge_tags(merged.get(bucket), *extra_tags)
+    return merged
+
+
 def _contains_any(title: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in title for keyword in keywords)
 
@@ -82,6 +95,11 @@ def apply_before_publish_rules(article: dict, strategy: str = "") -> tuple[dict,
     # 业务专栏优先级高于 AI 大事件路由。
     if _contains_any(title, RWA_KEYWORDS) or _contains_all(title, ("binance", "美股")):
         routed["tags"] = _merge_tags(routed.get("tags"), RWA_TAG)
+        routed["strong_content_tags"] = _merge_strong_content_tags(
+            routed.get("strong_content_tags"),
+            "人工",
+            RWA_TAG,
+        )
         routed["user_id"] = RWA_USER_ID
         routed["as_user_id"] = RWA_USER_ID
         return routed, "rwa"
