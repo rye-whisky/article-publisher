@@ -724,6 +724,18 @@ class ArticleDatabase:
         conn.commit()
         return cursor.rowcount > 0
 
+    def update_tags(self, article_id: str, tags: list[str]) -> bool:
+        """Persist tags without touching scoring state."""
+        conn = self._get_conn()
+        sanitized_tags = [_sanitize_for_gbk(str(tag)) for tag in tags or []]
+        tags_json = json.dumps(sanitized_tags, ensure_ascii=True) if sanitized_tags else None
+        cursor = conn.execute(
+            "UPDATE articles SET tags = ?, updated_at = ? WHERE article_id = ?",
+            (tags_json, datetime.now().isoformat(), article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def find_recent_by_keyword_overlap(
         self,
         keywords: list[str],

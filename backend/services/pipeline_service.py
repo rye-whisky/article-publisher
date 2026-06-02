@@ -15,6 +15,7 @@ from typing import Optional
 from config.loader import load_config
 from pipelines import create_scrapers
 from services.article_store import ArticleStore
+from services.before_publish import apply_before_publish_rules, merge_ai_event_tags
 from services.filter_service import FilterService
 from services.publisher import ChainThinkAuthError, Publisher
 from services.push_scheduler import PushScheduler
@@ -25,14 +26,7 @@ from utils.cos import COSUploader
 
 log = logging.getLogger("pipeline")
 
-AI_EVENT_TAG = "AI大事件"
-AI_EVENT_AS_USER_ID = "1932036327095366202"
 DAILY_REPORT_AS_USER_ID = "6"
-AI_EVENT_TITLE_KEYWORDS = (
-    "ai", "openai", "gpt", "anthropic", "claude", "google", "gemini",
-    "deepmind", "xai", "特斯拉", "微软", "英伟达", "amd", "百度", "字节", "阿里",
-    "人工智能", "openclaw", "agent", "hermes",
-)
 
 
 # ---------------------------------------------------------------------------
@@ -370,42 +364,26 @@ class PipelineService:
         raw = raw_id or article_id
         return f"{source_key}:{raw}" if raw else raw
 
-    @staticmethod
-    def _title_matches_ai_event(title: str) -> bool:
-        text = (title or "").strip().lower()
-        if not text:
-            return False
-        return any(keyword in text for keyword in AI_EVENT_TITLE_KEYWORDS)
-
-    @staticmethod
-    def _merge_tags_with_ai_event(tags: list[str] | None, should_add_ai_event: bool) -> list[str]:
-        merged: list[str] = []
-        for tag in tags or []:
-            tag_text = str(tag).strip()
-            if tag_text and tag_text not in merged:
-                merged.append(tag_text)
-
-        if should_add_ai_event and AI_EVENT_TAG not in merged:
-            if len(merged) >= 5:
-                merged[-1] = AI_EVENT_TAG
-            else:
-                merged.append(AI_EVENT_TAG)
-        return merged
-
     def _apply_column_routing(self, article: dict, strategy: str = "") -> dict:
         routed = dict(article)
         strategy_key = (strategy or "").strip().lower()
 
-        # Daily report has highest priority and must stay in the daily column.
+        # 日报优先级最高，必须固定发到日报专栏。
         if strategy_key == "daily_report":
             routed["user_id"] = DAILY_REPORT_AS_USER_ID
             routed["as_user_id"] = DAILY_REPORT_AS_USER_ID
             return routed
 
-        if self._title_matches_ai_event(routed.get("title", "")):
-            routed["user_id"] = AI_EVENT_AS_USER_ID
-            routed["as_user_id"] = AI_EVENT_AS_USER_ID
+        routed, _matched_rule = apply_before_publish_rules(routed, strategy)
         return routed
+
+    def _persist_before_publish_fields(self, article: dict):
+        """发布前如果补了标签，需要先回写数据库。"""
+        if not self.database:
+            return
+        article_id = article.get("article_id")
+        if article_id and "tags" in article:
+            self.database.update_tags(article_id, article.get("tags") or [])
 
     def _store_and_score_article(self, article: dict):
         """Persist article, generate abstract, score it and assign a review lane.
@@ -440,9 +418,9 @@ class PipelineService:
             return
 
         score_result = self.scorer.score_article(article)
-        score_result["tags"] = self._merge_tags_with_ai_event(
+        score_result["tags"] = merge_ai_event_tags(
             score_result.get("tags"),
-            self._title_matches_ai_event(article.get("title", "")),
+            article.get("title", ""),
         )
         article["tags"] = score_result["tags"]
         self.database.update_scoring(
@@ -642,6 +620,7 @@ class PipelineService:
         """Create or update a CMS draft without making it public."""
         prepared = self._merge_database_article_fields(article)
         prepared = self._apply_column_routing(prepared, strategy)
+        self._persist_before_publish_fields(prepared)
         prepared["_publish_strategy"] = strategy
         try:
             result = self.publisher.save_draft(prepared)
@@ -659,6 +638,7 @@ class PipelineService:
         """Create or update a CMS article and make it public."""
         prepared = self._merge_database_article_fields(article)
         prepared = self._apply_column_routing(prepared, strategy)
+        self._persist_before_publish_fields(prepared)
         try:
             result = self.publisher.publish(prepared)
         except ChainThinkAuthError as exc:
@@ -733,6 +713,7 @@ class PipelineService:
         """
         prepared = self._merge_database_article_fields(article)
         prepared = self._apply_column_routing(prepared, strategy)
+        self._persist_before_publish_fields(prepared)
         prepared = self._apply_auto_good_spacing(prepared, strategy)
 
         # Clear any stale cms_id from a previous draft — CMS API creates a new article
