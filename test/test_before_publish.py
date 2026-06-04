@@ -89,6 +89,7 @@ def test_ai_event_rule_routes_and_adds_tag():
     assert routed["user_id"] == AI_EVENT_USER_ID
     assert routed["as_user_id"] == AI_EVENT_USER_ID
     assert routed["tags"] == [AI_EVENT_TAG]
+    assert routed["strong_content_tags"] == {"人工": [AI_EVENT_TAG]}
 
 
 def test_rwa_rule_has_priority_over_ai_event():

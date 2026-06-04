@@ -121,6 +121,11 @@ def apply_before_publish_rules(article: dict, strategy: str = "") -> tuple[dict,
 
     if title_matches_ai_event(title):
         routed["tags"] = merge_ai_event_tags(routed.get("tags"), title)
+        routed["strong_content_tags"] = _merge_strong_content_tags(
+            routed.get("strong_content_tags"),
+            "人工",
+            AI_EVENT_TAG,
+        )
         routed["user_id"] = AI_EVENT_USER_ID
         routed["as_user_id"] = AI_EVENT_USER_ID
         return routed, "ai_event"
