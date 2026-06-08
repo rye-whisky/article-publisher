@@ -44,7 +44,8 @@ class TechFlowScraper(BaseScraper):
         soup = BeautifulSoup(html, "html.parser")
         items = []
         seen = set()
-        for a in soup.select('a[href*="/zh-CN/article/"]'):
+        # 深潮首页现在同时存在 /article/ 和 /zh-CN/article/ 两种链接格式。
+        for a in soup.select('a[href*="/article/"]'):
             href = a.get("href") or ""
             full_url = urljoin(list_url, href)
             m = re.search(r"/article/(\d+)", full_url)
