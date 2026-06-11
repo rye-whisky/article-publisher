@@ -2,12 +2,7 @@
 """Unified auto-publish + app broadcast scheduler.
 
 Rules:
-  - Morning window (8-10): any article scoring >= 75 triggers immediate publish + broadcast.
-  - Other windows (10-22, 2-hour blocks):
-      * Score >= 85 triggers immediate publish + broadcast.
-      * Score 75-84 enters the candidate pool and waits.
-      * Window-end fallback: if no >= 85 article appeared, the highest >= 75
-        candidate is published when the window is about to close.
+  - Active windows (8-23): articles scoring >= push_auto_score trigger publish.
   - Before publishing, semantic dedup against the last 6 auto-published articles.
   - Auto-publish ALWAYS includes App broadcast (push_title="爆文"/"热文").
 """
@@ -86,8 +81,8 @@ class AutoPublishScheduler:
         if pushed_in_window >= max_per_window:
             return {"ok": True, "reason": "window_full", "window_start": window_start.isoformat()}
 
-        # --- All windows: score >= 75 triggers publish immediately ---
-        min_score = HOT_THRESHOLD
+        # 自动发布阈值由后台设置控制，默认沿用 75 分。
+        min_score = self._get_auto_publish_score()
 
         # Query candidates with determined min_score
         candidates = self.database.get_auto_publish_broadcast_candidates(
@@ -295,7 +290,8 @@ class AutoPublishScheduler:
             "window_hours": window_hours,
             "active_hours": {"start_hour": ACTIVE_START, "end_hour": ACTIVE_END},
             "morning_window": {"start_hour": MORNING_START, "end_hour": MORNING_END},
-            "hot_score": HOT_THRESHOLD,
+            "auto_score": self._get_auto_publish_score(),
+            "hot_score": self._get_auto_publish_score(),
             "explosive_score": EXPLOSIVE_THRESHOLD,
             "review_score": self._get_int_setting("push_review_score", 70),
             "max_per_window": self._get_int_setting("push_max_per_window", 1),
@@ -329,7 +325,7 @@ class AutoPublishScheduler:
                 "is_morning": True,
                 "window_start": next_window_start,
                 "window_end": next_window_end,
-                "min_score": HOT_THRESHOLD,
+                "min_score": self._get_auto_publish_score(),
                 "auto_sources": sorted(self._get_auto_sources()),
             }
 
@@ -342,7 +338,7 @@ class AutoPublishScheduler:
             "is_morning": is_morning,
             "window_start": window_start,
             "window_end": window_end,
-            "min_score": HOT_THRESHOLD if is_morning else EXPLOSIVE_THRESHOLD,
+            "min_score": self._get_auto_publish_score(),
             "auto_sources": sorted(self._get_auto_sources()),
         }
 
@@ -535,6 +531,10 @@ class AutoPublishScheduler:
             return int(raw)
         except (TypeError, ValueError):
             return default
+
+    def _get_auto_publish_score(self) -> int:
+        """读取后台自动发布阈值，非法值回退到默认热文线。"""
+        return self._get_int_setting("push_auto_score", HOT_THRESHOLD)
 
     def _is_enabled(self) -> bool:
         raw = (self.database.get_setting("push_enabled") or "1").strip().lower()

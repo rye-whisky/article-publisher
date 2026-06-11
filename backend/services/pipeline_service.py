@@ -577,7 +577,7 @@ class PipelineService:
             return ""
         if numeric_score >= 85:
             return "爆文"
-        if numeric_score >= 75:
+        if numeric_score >= 60:
             return "热文"
         return ""
 
