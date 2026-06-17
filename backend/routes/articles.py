@@ -19,6 +19,8 @@ _LIST_FIELDS = {
     "score", "tags", "filter_status", "filter_reason", "score_status",
     "score_reason", "review_status", "cms_id", "published_strategy",
     "auto_publish_enabled", "publish_stage", "broadcasted_at",
+    "uk_cms_id", "uk_published_at", "uk_broadcasted_at", "uk_sync_error",
+    "uk_sync_error_at",
 }
 AUTO_CANDIDATE_SOURCE = "auto_candidates"
 
@@ -402,6 +404,8 @@ def publish_article(request: Request, article_id: str, _admin=Depends(require_ad
             "title": article.get("title", ""),
             "publish_stage": "published",
         }
+        if "uk_sync" in result:
+            response["uk_sync"] = result["uk_sync"]
         if duplicate_warning:
             response["duplicate_warning"] = duplicate_warning
         return response
@@ -427,7 +431,7 @@ def broadcast_article(request: Request, article_id: str, _admin=Depends(require_
     try:
         result = svc.broadcast_article(article, strategy="manual")
         push_label = svc.get_push_label(article.get("score"))
-        return {
+        response = {
             "ok": True,
             "article_id": article_id,
             "cms_id": article.get("cms_id"),
@@ -435,6 +439,9 @@ def broadcast_article(request: Request, article_id: str, _admin=Depends(require_
             "push_label": push_label or (article.get("title", "") or "")[:120],
             "publish_stage": "broadcasted",
         }
+        if "uk_sync" in result:
+            response["uk_sync"] = result["uk_sync"]
+        return response
     except Exception as e:
         raise HTTPException(502, f"推送失败: {str(e)[:200]}")
 

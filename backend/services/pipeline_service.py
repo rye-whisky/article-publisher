@@ -189,12 +189,13 @@ class PipelineService:
 
     def __init__(self, cfg: dict, base_dir: Path, session, scrapers: dict,
                  publisher: Publisher, article_store: ArticleStore, state_file: Path,
-                 database=None):
+                 database=None, uk_publisher: Publisher | None = None):
         self.cfg = cfg
         self.base_dir = base_dir
         self.session = session
         self.scrapers = scrapers
         self.publisher = publisher
+        self.uk_publisher = uk_publisher
         self.article_store = article_store
         self.state_file = state_file
         self.database = database  # Optional: ArticleDatabase
@@ -257,34 +258,58 @@ class PipelineService:
         # Build components
         scrapers = create_scrapers(cfg, session, base_dir, db=database)
 
-        def chainthink_headers_provider():
-            chainthink = cfg["chainthink"]
-            token = ""
-            user_id = ""
-            app_id = ""
-            as_user_id = ""
-            if database:
-                token = database.get_setting("chainthink_token") or ""
-                user_id = database.get_setting("chainthink_user_id") or ""
-                app_id = database.get_setting("chainthink_app_id") or ""
-                as_user_id = database.get_setting("chainthink_as_user_id") or ""
-            token = token or chainthink.get("token", "")
-            user_id = user_id or str(chainthink.get("user_id", ""))
-            app_id = app_id or str(chainthink.get("app_id", ""))
-            as_user_id = as_user_id or str(chainthink.get("as_user_id", ""))
-            # as_user_id defaults to user_id if still not set
-            if not as_user_id:
-                as_user_id = user_id
-            return {
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/json; charset=utf-8",
-                "Origin": "https://admin.chainthink.cn",
-                "Referer": "https://admin.chainthink.cn/",
-                "User-Agent": "Mozilla/5.0",
-                "x-token": token,
-                "x-user-id": user_id,
-                "X-App-Id": app_id,
-            }
+        def make_headers_provider(section_name: str, origin: str, referer: str, setting_prefix: str = ""):
+            section = cfg.get(section_name, {})
+            setting_prefix = setting_prefix or section_name
+
+            def provider():
+                token = ""
+                user_id = ""
+                app_id = ""
+                as_user_id = ""
+                if database:
+                    token = database.get_setting(f"{setting_prefix}_token") or ""
+                    user_id = database.get_setting(f"{setting_prefix}_user_id") or ""
+                    app_id = database.get_setting(f"{setting_prefix}_app_id") or ""
+                    as_user_id = database.get_setting(f"{setting_prefix}_as_user_id") or ""
+                token = token or section.get("token", "")
+                user_id = user_id or str(section.get("user_id", ""))
+                app_id = app_id or str(section.get("app_id", ""))
+                as_user_id = as_user_id or str(section.get("as_user_id", ""))
+                if not as_user_id:
+                    as_user_id = user_id
+                return {
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Origin": origin,
+                    "Referer": referer,
+                    "User-Agent": "Mozilla/5.0",
+                    "x-token": token,
+                    "x-user-id": user_id,
+                    "X-App-Id": app_id,
+                }
+
+            return provider
+
+        def make_setting_provider(section_name: str, key: str, setting_prefix: str = "", fallback: str = ""):
+            section = cfg.get(section_name, {})
+            setting_prefix = setting_prefix or section_name
+
+            def provider():
+                if database:
+                    value = database.get_setting(f"{setting_prefix}_{key}") or ""
+                    if value:
+                        return value
+                return str(section.get(key, fallback))
+
+            return provider
+
+        chainthink_headers_provider = make_headers_provider(
+            "chainthink",
+            "https://admin.chainthink.cn",
+            "https://admin.chainthink.cn/",
+            "chainthink",
+        )
 
         api_headers = chainthink_headers_provider()
 
@@ -302,6 +327,8 @@ class PipelineService:
             session=session,
             x_app_id=chainthink_x_app_id_provider(),
             api_headers_provider=chainthink_headers_provider,
+            origin="https://admin.chainthink.cn",
+            default_domain=str(cfg["chainthink"].get("cos_domain", "https://cos.chainthink.cn")),
         )
 
         def chainthink_user_id_provider():
@@ -321,10 +348,44 @@ class PipelineService:
             user_id_provider=chainthink_user_id_provider,
         )
 
+        uk_publisher = None
+        chainthink_uk = cfg.get("chainthink_uk") or {}
+        if chainthink_uk.get("api_url") and chainthink_uk.get("upload_url"):
+            uk_headers_provider = make_headers_provider(
+                "chainthink_uk",
+                "https://admin.chainthink.co.uk",
+                "https://admin.chainthink.co.uk/",
+                "chainthink_uk",
+            )
+            uk_app_id_provider = make_setting_provider("chainthink_uk", "app_id", "chainthink_uk")
+            uk_cos = COSUploader(
+                upload_url=chainthink_uk["upload_url"],
+                api_headers=uk_headers_provider(),
+                session=session,
+                x_app_id=uk_app_id_provider(),
+                api_headers_provider=uk_headers_provider,
+                origin="https://admin.chainthink.co.uk",
+                default_domain=str(chainthink_uk.get("cos_domain", "https://cos.chainthink.co.uk")),
+            )
+            uk_user_id_provider = make_setting_provider(
+                "chainthink_uk",
+                "as_user_id",
+                "chainthink_uk",
+                str(chainthink_uk.get("user_id", "1")),
+            )
+            uk_publisher = Publisher(
+                api_url=chainthink_uk["api_url"],
+                api_headers=uk_headers_provider(),
+                cos_uploader=uk_cos,
+                push_url=chainthink_uk.get("push_url", ""),
+                api_headers_provider=uk_headers_provider,
+                user_id_provider=uk_user_id_provider,
+            )
+
         article_store = ArticleStore(scrapers)
         state_file = base_dir / cfg["paths"]["state_file"]
 
-        return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file, database)
+        return cls(cfg, base_dir, session, scrapers, publisher, article_store, state_file, database, uk_publisher)
 
     # -- State management --
 
@@ -473,6 +534,7 @@ class PipelineService:
             "scheduler": self.auto_publish_scheduler.get_status() if self.auto_publish_scheduler else {},
             "broadcast": self.auto_publish_scheduler.get_broadcast_status() if self.auto_publish_scheduler else {},
             "chainthink": self.get_chainthink_token_status(),
+            "uk_sync": self.get_uk_sync_status(),
         }
 
     def _keyword_semantic_dedup(self, article: dict) -> bool:
@@ -559,6 +621,105 @@ class PipelineService:
             "chainthink_token_error": message,
             "chainthink_token_error_at": datetime.now().isoformat(timespec="seconds"),
         })
+
+    def _is_uk_sync_enabled(self) -> bool:
+        if not self.uk_publisher:
+            return False
+        if self.database:
+            value = self.database.get_setting("chainthink_uk_sync_enabled")
+            if value is not None:
+                return str(value) == "1"
+        return str(self.cfg.get("chainthink_uk", {}).get("sync_enabled", "0")) == "1"
+
+    def get_uk_sync_status(self) -> dict:
+        configured = bool(self.uk_publisher)
+        return {
+            "enabled": self._is_uk_sync_enabled(),
+            "configured": configured,
+            "status": (self.database.get_setting("chainthink_uk_token_status") or "unknown") if self.database else "unknown",
+            "error": (self.database.get_setting("chainthink_uk_token_error") or "") if self.database else "",
+            "error_at": (self.database.get_setting("chainthink_uk_token_error_at") or "") if self.database else "",
+        }
+
+    def mark_chainthink_uk_token_ok(self):
+        if not self.database:
+            return
+        self.database.set_settings_batch({
+            "chainthink_uk_token_status": "ok",
+            "chainthink_uk_token_error": "",
+            "chainthink_uk_token_error_at": "",
+        })
+
+    def mark_chainthink_uk_token_error(self, message: str):
+        if not self.database:
+            return
+        self.database.set_settings_batch({
+            "chainthink_uk_token_status": "expired",
+            "chainthink_uk_token_error": message,
+            "chainthink_uk_token_error_at": datetime.now().isoformat(timespec="seconds"),
+        })
+
+    def _prepare_uk_article(self, article: dict) -> dict:
+        uk_article = dict(article)
+        uk_article["cms_id"] = article.get("uk_cms_id") or ""
+        uk_user_id = ""
+        if self.database:
+            uk_user_id = self.database.get_setting("chainthink_uk_as_user_id") or self.database.get_setting("chainthink_uk_user_id") or ""
+        uk_user_id = uk_user_id or str(self.cfg.get("chainthink_uk", {}).get("as_user_id", "") or self.cfg.get("chainthink_uk", {}).get("user_id", "1"))
+        uk_article["user_id"] = uk_user_id
+        return uk_article
+
+    def _record_uk_sync_error(self, article_id: str, exc: Exception):
+        message = str(exc)
+        log.warning("UK sync failed for %s: %s", article_id, message)
+        if isinstance(exc, ChainThinkAuthError):
+            self.mark_chainthink_uk_token_error(message)
+        if self.database:
+            self.database.mark_uk_sync_error(article_id, message)
+
+    def _sync_uk_publish(self, article: dict) -> dict | None:
+        if not self._is_uk_sync_enabled():
+            return None
+        article_id = article.get("article_id", "")
+        try:
+            result = self.uk_publisher.publish(self._prepare_uk_article(article))
+        except Exception as exc:
+            self._record_uk_sync_error(article_id, exc)
+            return {"ok": False, "error": str(exc)}
+        self.mark_chainthink_uk_token_ok()
+        if self.database:
+            self.database.mark_uk_published(article_id, str(result.get("cms_id", "")))
+        return {"ok": True, "cms_id": result.get("cms_id"), "cover_image": result.get("cover_image", "")}
+
+    def _sync_uk_broadcast(self, article: dict, title: str = "", push_label: str = "", push_content: str = "") -> dict | None:
+        if not self._is_uk_sync_enabled():
+            return None
+        article_id = article.get("article_id", "")
+        uk_cms_id = article.get("uk_cms_id")
+        if not uk_cms_id and self.database and article_id:
+            db_article = self.database.get_by_article_id(article_id)
+            if db_article:
+                uk_cms_id = db_article.get("uk_cms_id")
+                article = {**db_article, **article}
+        if not uk_cms_id:
+            published = self._sync_uk_publish(article)
+            if not published or not published.get("ok"):
+                return published
+            uk_cms_id = published.get("cms_id")
+        try:
+            result = self.uk_publisher.push_to_app(
+                cms_id=str(uk_cms_id),
+                title=title or article.get("title", ""),
+                push_label=push_label,
+                push_content=push_content,
+            )
+        except Exception as exc:
+            self._record_uk_sync_error(article_id, exc)
+            return {"ok": False, "error": str(exc)}
+        self.mark_chainthink_uk_token_ok()
+        if self.database:
+            self.database.mark_uk_broadcasted(article_id)
+        return {"ok": True, **result}
 
     def get_daily_report_status(self) -> dict:
         """Return daily report scheduler status."""
@@ -647,6 +808,9 @@ class PipelineService:
         self.mark_chainthink_token_ok()
         prepared["cms_id"] = result["cms_id"]
         prepared["publish_stage"] = "published"
+        uk_sync = self._sync_uk_publish(prepared)
+        if uk_sync is not None:
+            result["uk_sync"] = uk_sync
 
         if self.database:
             is_good = prepared.get("is_good") if "is_good" in prepared else None
@@ -683,6 +847,13 @@ class PipelineService:
             self.mark_chainthink_token_error(str(exc))
             raise
         self.mark_chainthink_token_ok()
+        uk_sync = self._sync_uk_broadcast(
+            article,
+            title=article.get("title", ""),
+            push_label=push_label,
+        )
+        if uk_sync is not None:
+            result["uk_sync"] = uk_sync
 
         if self.database:
             self.database.mark_broadcasted(article["article_id"], strategy=strategy)
@@ -739,6 +910,9 @@ class PipelineService:
 
         prepared["cms_id"] = cms_id
         prepared["publish_stage"] = "published"
+        uk_publish = self._sync_uk_publish(prepared)
+        if uk_publish is not None:
+            pub_result["uk_sync"] = uk_publish
 
         if self.database:
             self.database.mark_published(
@@ -766,6 +940,14 @@ class PipelineService:
             self.mark_chainthink_token_error(str(exc))
             raise
         self.mark_chainthink_token_ok()
+        uk_push = self._sync_uk_broadcast(
+            prepared,
+            title=article.get("title", ""),
+            push_label=push_label or self.get_push_label(prepared.get("score")),
+            push_content=push_content,
+        )
+        if uk_push is not None:
+            push_result["uk_sync"] = uk_push
 
         if self.database:
             self.database.mark_broadcasted(prepared["article_id"], strategy=strategy)

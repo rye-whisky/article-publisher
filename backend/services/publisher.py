@@ -256,7 +256,8 @@ class Publisher:
                 log.warning("Cover upload failed for %s: %s", article.get("article_id_full", ""), exc)
 
         article_id = str(article.get("cms_id") or "0")
-        payload_user_id = str(article.get("user_id") or "3")
+        default_user_id = self._user_id_provider() if self._user_id_provider else "3"
+        payload_user_id = str(article.get("user_id") or default_user_id or "3")
         payload = {
             "id": article_id,
             "info": {"cover_image": cover_image} if cover_image else {},

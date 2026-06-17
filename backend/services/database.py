@@ -94,6 +94,11 @@ class ArticleDatabase:
                 is_good INTEGER DEFAULT 0,
                 broadcasted_at TEXT,
                 broadcast_strategy TEXT,
+                uk_cms_id TEXT,
+                uk_published_at TEXT,
+                uk_broadcasted_at TEXT,
+                uk_sync_error TEXT,
+                uk_sync_error_at TEXT,
                 in_site_conflict_url TEXT,
                 in_site_conflict_title TEXT,
                 in_site_conflict_published_at TEXT,
@@ -213,6 +218,11 @@ class ArticleDatabase:
             "ALTER TABLE push_history ADD COLUMN in_site_article_published_at TEXT",
             "ALTER TABLE articles ADD COLUMN keywords TEXT",
             "ALTER TABLE articles ADD COLUMN is_good INTEGER DEFAULT 0",
+            "ALTER TABLE articles ADD COLUMN uk_cms_id TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_published_at TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_broadcasted_at TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_sync_error TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_sync_error_at TEXT",
         ]:
             try:
                 conn.execute(col_sql)
@@ -935,6 +945,53 @@ class ArticleDatabase:
             WHERE article_id = ?
             """,
             (now, strategy, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_published(self, article_id: str, uk_cms_id: str) -> bool:
+        """Record the paired UK CMS article id for a synced public publish."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_cms_id = ?, uk_published_at = ?, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (uk_cms_id, now, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_broadcasted(self, article_id: str) -> bool:
+        """Record that the paired UK CMS article was pushed."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_broadcasted_at = ?, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (now, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_sync_error(self, article_id: str, error: str) -> bool:
+        """Record the latest UK sync failure without changing CN publish state."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_sync_error = ?, uk_sync_error_at = ?, updated_at = ?
+            WHERE article_id = ?
+            """,
+            ((error or "")[:1000], now, now, article_id),
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -1739,6 +1796,11 @@ class ArticleDatabase:
             "updated_at": row["updated_at"],
             "published_at": row["published_at"],
             "cms_id": row["cms_id"],
+            "uk_cms_id": row["uk_cms_id"] if "uk_cms_id" in row.keys() else None,
+            "uk_published_at": row["uk_published_at"] if "uk_published_at" in row.keys() else None,
+            "uk_broadcasted_at": row["uk_broadcasted_at"] if "uk_broadcasted_at" in row.keys() else None,
+            "uk_sync_error": row["uk_sync_error"] if "uk_sync_error" in row.keys() else None,
+            "uk_sync_error_at": row["uk_sync_error_at"] if "uk_sync_error_at" in row.keys() else None,
             "score": row["score"] if "score" in row.keys() else None,
             "category": row["category"] if "category" in row.keys() else None,
             "language": row["language"] if "language" in row.keys() else "zh",
