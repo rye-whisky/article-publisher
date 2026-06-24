@@ -59,6 +59,6 @@ retry:
 
 auth:
   username: "admin"
-  password: "${ADMIN_PASSWORD}"  # read from environment variable
+  password: "admin123456"
   secret_key: "${SECRET_KEY}"    # read from environment variable
   token_expire_hours: 24
