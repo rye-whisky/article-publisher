@@ -96,7 +96,7 @@ class Publisher:
     @staticmethod
     def _strip_punctuation(text: str) -> str:
         """Remove punctuation and whitespace for fuzzy text comparison."""
-        return re.sub(r'[\s，。、；：！？""''（）\[\]【】…—\-,.:;!?()\'\"]+', '', text or '')
+        return re.sub(r"[\s，。、；：！？\"'（）\[\]【】…—\-,.:;!?()]+", '', text or '')
 
     @staticmethod
     def _is_internal_jump_url(href: str) -> bool:
@@ -109,17 +109,36 @@ class Publisher:
         haystack = " ".join(part for part in [parsed.netloc, parsed.path, lowered] if part)
         return any(domain in haystack for domain in INTERNAL_JUMP_DOMAINS)
 
-    @classmethod
-    def _should_drop_link_block(cls, text: str, href: str) -> bool:
-        if not cls._is_internal_jump_url(href):
-            return False
+    @staticmethod
+    def _normalize_url_for_match(url: str) -> str:
+        if not url:
+            return ""
+        parsed = urlparse(url.strip())
+        if not parsed.netloc:
+            return url.strip().rstrip("/")
+        path = parsed.path.rstrip("/")
+        return f"{parsed.netloc.lower()}{path}"
+
+    @staticmethod
+    def _looks_like_original_link_text(text: str) -> bool:
         normalized = re.sub(r"\s+", "", (text or "").lower())
-        if not normalized:
-            return True
-        return any(token in normalized for token in ("原文", "原链接", "阅读全文", "阅读原文", "查看原文", "点击查看"))
+        return any(token in normalized for token in ("原文链接", "原链接", "阅读全文", "阅读原文", "查看原文", "点击查看"))
 
     @classmethod
-    def _sanitize_inline_html(cls, raw_html: str) -> str:
+    def _should_drop_link_block(cls, text: str, href: str, original_url: str = "") -> bool:
+        normalized = re.sub(r"\s+", "", (text or "").lower())
+        if cls._looks_like_original_link_text(text):
+            return True
+        if original_url and cls._normalize_url_for_match(href) == cls._normalize_url_for_match(original_url):
+            return True
+        if not cls._is_internal_jump_url(href):
+            return False
+        if not normalized:
+            return True
+        return "原文" in normalized or cls._looks_like_original_link_text(text)
+
+    @classmethod
+    def _sanitize_inline_html(cls, raw_html: str, original_url: str = "") -> str:
         if not raw_html:
             return ""
 
@@ -127,16 +146,14 @@ class Publisher:
         for anchor in soup.find_all("a", href=True):
             href = anchor.get("href", "")
             text = anchor.get_text(" ", strip=True)
-            if not cls._is_internal_jump_url(href):
-                continue
             block_parent = anchor.find_parent(["p", "div", "li"])
             block_text = block_parent.get_text(" ", strip=True) if block_parent else text
-            if cls._should_drop_link_block(block_text or text, href):
+            if cls._should_drop_link_block(block_text or text, href, original_url):
                 if block_parent is not None:
                     block_parent.decompose()
                 else:
                     anchor.decompose()
-            else:
+            elif cls._is_internal_jump_url(href):
                 anchor.unwrap()
 
         for tag in soup.find_all(["p", "div", "span", "h2", "h3", "h4"]):
@@ -150,6 +167,7 @@ class Publisher:
     def build_html(self, article):
         parts = []
         cover_src = article.get("cover_src", "") or ""
+        original_url = article.get("original_url", "") or ""
         abstract_clean = self._strip_punctuation(article.get("abstract") or "")
         abstract_skipped = False
 
@@ -167,8 +185,10 @@ class Publisher:
                 continue
 
             # Extract text for processing
-            raw = self._sanitize_inline_html((block.get("html") or "").strip())
+            raw = self._sanitize_inline_html((block.get("html") or "").strip(), original_url=original_url)
             text = (block.get("text") or "").strip()
+            if self._looks_like_original_link_text(text) and (block.get("href") or block.get("html")):
+                continue
 
             # Rule 3: Skip first text block if it duplicates the abstract
             if not abstract_skipped and text:
@@ -192,7 +212,7 @@ class Publisher:
                 continue
             tag = block.get("type", "p") if block.get("type") in ["p", "h2", "h3", "h4"] else "p"
             href = block.get("href", "")
-            if href and self._should_drop_link_block(text, href):
+            if href and self._should_drop_link_block(text, href, original_url):
                 continue
             if href and not self._is_internal_jump_url(href):
                 parts.append(
