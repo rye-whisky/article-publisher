@@ -19,7 +19,7 @@ _LIST_FIELDS = {
     "score", "tags", "filter_status", "filter_reason", "score_status",
     "score_reason", "review_status", "cms_id", "published_strategy",
     "auto_publish_enabled", "publish_stage", "broadcasted_at",
-    "uk_cms_id", "uk_published_at", "uk_broadcasted_at", "uk_sync_error",
+    "uk_cms_id", "uk_publish_stage", "uk_published_at", "uk_broadcasted_at", "uk_sync_error",
     "uk_sync_error_at",
 }
 AUTO_CANDIDATE_SOURCE = "auto_candidates"

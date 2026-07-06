@@ -95,6 +95,7 @@ class ArticleDatabase:
                 broadcasted_at TEXT,
                 broadcast_strategy TEXT,
                 uk_cms_id TEXT,
+                uk_publish_stage TEXT,
                 uk_published_at TEXT,
                 uk_broadcasted_at TEXT,
                 uk_sync_error TEXT,
@@ -219,6 +220,7 @@ class ArticleDatabase:
             "ALTER TABLE articles ADD COLUMN keywords TEXT",
             "ALTER TABLE articles ADD COLUMN is_good INTEGER DEFAULT 0",
             "ALTER TABLE articles ADD COLUMN uk_cms_id TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_publish_stage TEXT",
             "ALTER TABLE articles ADD COLUMN uk_published_at TEXT",
             "ALTER TABLE articles ADD COLUMN uk_broadcasted_at TEXT",
             "ALTER TABLE articles ADD COLUMN uk_sync_error TEXT",
@@ -956,11 +958,28 @@ class ArticleDatabase:
         cursor = conn.execute(
             """
             UPDATE articles
-            SET uk_cms_id = ?, uk_published_at = ?, uk_sync_error = NULL,
+            SET uk_cms_id = ?, uk_publish_stage = 'published', uk_published_at = ?, uk_sync_error = NULL,
                 uk_sync_error_at = NULL, updated_at = ?
             WHERE article_id = ?
             """,
             (uk_cms_id, now, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_draft(self, article_id: str, uk_cms_id: str) -> bool:
+        """Record the paired UK CMS article id for a synced draft."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_cms_id = ?, uk_publish_stage = 'draft', uk_published_at = NULL,
+                uk_broadcasted_at = NULL, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (uk_cms_id, now, article_id),
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -972,7 +991,7 @@ class ArticleDatabase:
         cursor = conn.execute(
             """
             UPDATE articles
-            SET uk_broadcasted_at = ?, uk_sync_error = NULL,
+            SET uk_publish_stage = 'published', uk_broadcasted_at = ?, uk_sync_error = NULL,
                 uk_sync_error_at = NULL, updated_at = ?
             WHERE article_id = ?
             """,
@@ -1797,6 +1816,7 @@ class ArticleDatabase:
             "published_at": row["published_at"],
             "cms_id": row["cms_id"],
             "uk_cms_id": row["uk_cms_id"] if "uk_cms_id" in row.keys() else None,
+            "uk_publish_stage": row["uk_publish_stage"] if "uk_publish_stage" in row.keys() else None,
             "uk_published_at": row["uk_published_at"] if "uk_published_at" in row.keys() else None,
             "uk_broadcasted_at": row["uk_broadcasted_at"] if "uk_broadcasted_at" in row.keys() else None,
             "uk_sync_error": row["uk_sync_error"] if "uk_sync_error" in row.keys() else None,

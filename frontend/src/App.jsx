@@ -133,6 +133,7 @@ const buildWorkflowSettingsForm = (settingsData = {}) => ({
   broadcast_enabled: (settingsData.broadcast_enabled ?? '0') === '1',
   broadcast_grace_minutes: settingsData.broadcast_grace_minutes || '15',
   chainthink_uk_sync_enabled: (settingsData.chainthink_uk_sync_enabled ?? '0') === '1',
+  chainthink_uk_draft_enabled: (settingsData.chainthink_uk_draft_enabled ?? '0') === '1',
   llm_optimization_enabled: (settingsData.llm_optimization_enabled ?? '0') === '1',
   llm_author_info_enabled: (settingsData.llm_author_info_enabled ?? '0') === '1',
   ai_daily_limit: settingsData.ai_daily_limit || '2',
@@ -149,6 +150,7 @@ const workflowSettingsToPayload = (form) => ({
   broadcast_enabled: form.broadcast_enabled ? '1' : '0',
   broadcast_grace_minutes: String(form.broadcast_grace_minutes || '15'),
   chainthink_uk_sync_enabled: form.chainthink_uk_sync_enabled ? '1' : '0',
+  chainthink_uk_draft_enabled: form.chainthink_uk_draft_enabled ? '1' : '0',
   llm_optimization_enabled: form.llm_optimization_enabled ? '1' : '0',
   llm_author_info_enabled: form.llm_author_info_enabled ? '1' : '0',
   ai_daily_limit: String(form.ai_daily_limit || '2'),
@@ -157,6 +159,8 @@ const workflowSettingsToPayload = (form) => ({
 const formatUkSyncMessage = (result) => {
   const uk = result?.uk_sync
   if (!uk) return ''
+  if (uk.ok && uk.skipped) return '\nUK 推送跳过：草稿模式'
+  if (uk.ok && uk.publish_stage === 'draft') return `\nUK 草稿 ID: ${uk.cms_id}`
   if (uk.ok) return `\nUK CMS ID: ${uk.cms_id}`
   return `\nUK 同步失败：${uk.error || 'unknown error'}`
 }
@@ -611,6 +615,24 @@ function DashboardPage({ onNavigateProfile }) {
                   onChange={e => handleWorkflowFieldChange('chainthink_uk_sync_enabled', e.target.checked)}
                 />
                 <span>{workflowForm.chainthink_uk_sync_enabled ? '已开启' : '已关闭'}</span>
+              </label>
+            )}
+          </div>
+          <div className="settings-group">
+            <label>UK 草稿</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">
+                {workflow.uk_sync?.enabled && workflow.uk_sync?.draft_enabled ? '已开启' : '已关闭'}
+              </div>
+            ) : (
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={workflowForm.chainthink_uk_draft_enabled}
+                  disabled={!workflowForm.chainthink_uk_sync_enabled}
+                  onChange={e => handleWorkflowFieldChange('chainthink_uk_draft_enabled', e.target.checked)}
+                />
+                <span>{workflowForm.chainthink_uk_sync_enabled && workflowForm.chainthink_uk_draft_enabled ? '已开启' : '已关闭'}</span>
               </label>
             )}
           </div>
@@ -1841,6 +1863,30 @@ function PromptPage() {
                 disabled={isGuest}
               />
               <span>{settingsForm.push_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>同步 UK 后台</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.chainthink_uk_sync_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, chainthink_uk_sync_enabled: e.target.checked }))}
+                disabled={isGuest}
+              />
+              <span>{settingsForm.chainthink_uk_sync_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>UK 草稿</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.chainthink_uk_draft_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, chainthink_uk_draft_enabled: e.target.checked }))}
+                disabled={isGuest || !settingsForm.chainthink_uk_sync_enabled}
+              />
+              <span>{settingsForm.chainthink_uk_sync_enabled && settingsForm.chainthink_uk_draft_enabled ? '已开启' : '已关闭'}</span>
             </label>
           </div>
           <div className="settings-group">

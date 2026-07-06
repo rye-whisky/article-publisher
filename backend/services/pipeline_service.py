@@ -631,10 +631,20 @@ class PipelineService:
                 return str(value) == "1"
         return str(self.cfg.get("chainthink_uk", {}).get("sync_enabled", "0")) == "1"
 
+    def _is_uk_draft_enabled(self) -> bool:
+        if not self.uk_publisher:
+            return False
+        if self.database:
+            value = self.database.get_setting("chainthink_uk_draft_enabled")
+            if value is not None:
+                return str(value) == "1"
+        return str(self.cfg.get("chainthink_uk", {}).get("draft_enabled", "0")) == "1"
+
     def get_uk_sync_status(self) -> dict:
         configured = bool(self.uk_publisher)
         return {
             "enabled": self._is_uk_sync_enabled(),
+            "draft_enabled": self._is_uk_draft_enabled(),
             "configured": configured,
             "status": (self.database.get_setting("chainthink_uk_token_status") or "unknown") if self.database else "unknown",
             "error": (self.database.get_setting("chainthink_uk_token_error") or "") if self.database else "",
@@ -681,19 +691,32 @@ class PipelineService:
         if not self._is_uk_sync_enabled():
             return None
         article_id = article.get("article_id", "")
+        draft_enabled = self._is_uk_draft_enabled()
         try:
-            result = self.uk_publisher.publish(self._prepare_uk_article(article))
+            uk_article = self._prepare_uk_article(article)
+            result = self.uk_publisher.save_draft(uk_article) if draft_enabled else self.uk_publisher.publish(uk_article)
         except Exception as exc:
             self._record_uk_sync_error(article_id, exc)
             return {"ok": False, "error": str(exc)}
         self.mark_chainthink_uk_token_ok()
         if self.database:
-            self.database.mark_uk_published(article_id, str(result.get("cms_id", "")))
-        return {"ok": True, "cms_id": result.get("cms_id"), "cover_image": result.get("cover_image", "")}
+            uk_cms_id = str(result.get("cms_id", ""))
+            if draft_enabled:
+                self.database.mark_uk_draft(article_id, uk_cms_id)
+            else:
+                self.database.mark_uk_published(article_id, uk_cms_id)
+        return {
+            "ok": True,
+            "cms_id": result.get("cms_id"),
+            "cover_image": result.get("cover_image", ""),
+            "publish_stage": "draft" if draft_enabled else "published",
+        }
 
     def _sync_uk_broadcast(self, article: dict, title: str = "", push_label: str = "", push_content: str = "") -> dict | None:
         if not self._is_uk_sync_enabled():
             return None
+        if self._is_uk_draft_enabled():
+            return {"ok": True, "skipped": True, "reason": "uk_draft_mode"}
         article_id = article.get("article_id", "")
         uk_cms_id = article.get("uk_cms_id")
         if not uk_cms_id and self.database and article_id:
