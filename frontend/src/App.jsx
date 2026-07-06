@@ -419,6 +419,22 @@ function DashboardPage({ onNavigateProfile }) {
     setWorkflowForm(prev => ({ ...prev, [field]: value }))
   }
 
+  const handleWorkflowFieldSave = async (field, value) => {
+    const nextForm = { ...workflowForm, [field]: value }
+    setWorkflowForm(nextForm)
+    setWorkflowSaving(true)
+    try {
+      await api.updateSettings(workflowSettingsToPayload(nextForm))
+      setWorkflowDirty(false)
+      await fetchStatus()
+    } catch (e) {
+      alert(e.message)
+      await fetchStatus()
+    } finally {
+      setWorkflowSaving(false)
+    }
+  }
+
   const handleDashboardToggleAutoSource = (sourceKey) => {
     setWorkflowDirty(true)
     setWorkflowForm(prev => {
@@ -612,7 +628,8 @@ function DashboardPage({ onNavigateProfile }) {
                 <input
                   type="checkbox"
                   checked={workflowForm.chainthink_uk_sync_enabled}
-                  onChange={e => handleWorkflowFieldChange('chainthink_uk_sync_enabled', e.target.checked)}
+                  disabled={workflowSaving}
+                  onChange={e => handleWorkflowFieldSave('chainthink_uk_sync_enabled', e.target.checked)}
                 />
                 <span>{workflowForm.chainthink_uk_sync_enabled ? '已开启' : '已关闭'}</span>
               </label>
@@ -629,8 +646,8 @@ function DashboardPage({ onNavigateProfile }) {
                 <input
                   type="checkbox"
                   checked={workflowForm.chainthink_uk_draft_enabled}
-                  disabled={!workflowForm.chainthink_uk_sync_enabled}
-                  onChange={e => handleWorkflowFieldChange('chainthink_uk_draft_enabled', e.target.checked)}
+                  disabled={workflowSaving || !workflowForm.chainthink_uk_sync_enabled}
+                  onChange={e => handleWorkflowFieldSave('chainthink_uk_draft_enabled', e.target.checked)}
                 />
                 <span>{workflowForm.chainthink_uk_sync_enabled && workflowForm.chainthink_uk_draft_enabled ? '已开启' : '已关闭'}</span>
               </label>
