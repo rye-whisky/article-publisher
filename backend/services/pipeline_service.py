@@ -712,6 +712,25 @@ class PipelineService:
             "publish_stage": "draft" if draft_enabled else "published",
         }
 
+    def _sync_uk_draft(self, article: dict) -> dict | None:
+        if not self._is_uk_sync_enabled():
+            return None
+        article_id = article.get("article_id", "")
+        try:
+            result = self.uk_publisher.save_draft(self._prepare_uk_article(article))
+        except Exception as exc:
+            self._record_uk_sync_error(article_id, exc)
+            return {"ok": False, "error": str(exc)}
+        self.mark_chainthink_uk_token_ok()
+        if self.database:
+            self.database.mark_uk_draft(article_id, str(result.get("cms_id", "")))
+        return {
+            "ok": True,
+            "cms_id": result.get("cms_id"),
+            "cover_image": result.get("cover_image", ""),
+            "publish_stage": "draft",
+        }
+
     def _sync_uk_broadcast(self, article: dict, title: str = "", push_label: str = "", push_content: str = "") -> dict | None:
         if not self._is_uk_sync_enabled():
             return None
@@ -798,6 +817,10 @@ class PipelineService:
             merged["cms_id"] = db_article["cms_id"]
         if db_article.get("publish_stage") and not merged.get("publish_stage"):
             merged["publish_stage"] = db_article["publish_stage"]
+        if db_article.get("uk_cms_id") and not merged.get("uk_cms_id"):
+            merged["uk_cms_id"] = db_article["uk_cms_id"]
+        if db_article.get("uk_publish_stage") and not merged.get("uk_publish_stage"):
+            merged["uk_publish_stage"] = db_article["uk_publish_stage"]
         return merged
 
     def save_article_draft(self, article: dict, strategy: str = "manual") -> dict:
@@ -814,6 +837,9 @@ class PipelineService:
         self.mark_chainthink_token_ok()
         prepared["cms_id"] = result["cms_id"]
         prepared["publish_stage"] = "draft"
+        uk_sync = self._sync_uk_draft(prepared)
+        if uk_sync is not None:
+            result["uk_sync"] = uk_sync
         if self.database:
             self.database.mark_cms_draft(prepared["article_id"], result["cms_id"], strategy=strategy)
         return result
