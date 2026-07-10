@@ -28,10 +28,11 @@ class FakeResponse:
 def test_publish_uses_user_id_provider_when_article_has_no_user_id(monkeypatch):
     captured = {}
 
-    def fake_post(url, headers, data, timeout):
+    def fake_post(url, headers, data, timeout, proxies=None):
         captured["url"] = url
         captured["headers"] = headers
         captured["payload"] = json.loads(data.decode("utf-8"))
+        captured["proxies"] = proxies
         return FakeResponse()
 
     monkeypatch.setattr("services.publisher.requests.post", fake_post)
@@ -52,3 +53,56 @@ def test_publish_uses_user_id_provider_when_article_has_no_user_id(monkeypatch):
     assert captured["payload"]["user_id"] == "1"
     assert captured["payload"]["as_user_id"] == "1"
     assert captured["payload"]["info"]["cover_image"] == "https://cos.example/cover.jpg"
+    assert captured["proxies"] is None
+
+
+def test_publish_uses_configured_request_proxy(monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers, data, timeout, proxies=None):
+        captured["url"] = url
+        captured["proxies"] = proxies
+        return FakeResponse()
+
+    monkeypatch.setattr("services.publisher.requests.post", fake_post)
+
+    proxies = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
+    publisher = Publisher(
+        api_url="https://api.example/ccs/v1/admin/content/publish",
+        api_headers={"x-token": "token"},
+        cos_uploader=FakeCos(),
+        request_proxies=proxies,
+    )
+    result = publisher.publish({
+        "title": "Test",
+        "blocks": [{"type": "p", "text": "body"}],
+    })
+
+    assert result["cms_id"] == "cms_1"
+    assert captured["proxies"] == proxies
+
+
+def test_push_uses_configured_request_proxy(monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers, data, timeout, proxies=None):
+        captured["url"] = url
+        captured["payload"] = json.loads(data.decode("utf-8"))
+        captured["proxies"] = proxies
+        return FakeResponse()
+
+    monkeypatch.setattr("services.publisher.requests.post", fake_post)
+
+    proxies = {"http": "http://127.0.0.1:7890", "https": "http://127.0.0.1:7890"}
+    publisher = Publisher(
+        api_url="https://api.example/ccs/v1/admin/content/publish",
+        api_headers={"x-token": "token"},
+        cos_uploader=FakeCos(),
+        push_url="https://api.example/financial_admin/v1/content/push",
+        request_proxies=proxies,
+    )
+    result = publisher.push_to_app("cms_1", "Title")
+
+    assert result["ok"]
+    assert captured["payload"]["push_id"] == "cms_1"
+    assert captured["proxies"] == proxies

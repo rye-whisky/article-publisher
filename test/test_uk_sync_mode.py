@@ -3,6 +3,7 @@
 """Tests for UK sync publish and draft modes."""
 
 import sys
+import os
 from pathlib import Path
 
 backend_dir = Path(__file__).resolve().parent.parent / "backend"
@@ -195,6 +196,52 @@ def test_uk_broadcast_pushes_in_publish_mode():
     assert service.database.broadcasted == ["article-1"]
 
 
+def test_uk_proxy_enabled_for_opt_production_path():
+    old_dev_mode = os.environ.pop("DEV_MODE", None)
+    try:
+        proxies = PipelineService._build_uk_proxy_config(
+            Path("/opt/article-publisher"),
+            {"chainthink_uk": {}},
+        )
+    finally:
+        if old_dev_mode is not None:
+            os.environ["DEV_MODE"] = old_dev_mode
+    assert proxies == {
+        "http": "http://127.0.0.1:7890",
+        "https": "http://127.0.0.1:7890",
+    }
+
+
+def test_uk_proxy_disabled_in_dev_mode():
+    old_dev_mode = os.environ.get("DEV_MODE")
+    os.environ["DEV_MODE"] = "1"
+    try:
+        proxies = PipelineService._build_uk_proxy_config(
+            Path("/opt/article-publisher"),
+            {"chainthink_uk": {}},
+        )
+    finally:
+        if old_dev_mode is None:
+            os.environ.pop("DEV_MODE", None)
+        else:
+            os.environ["DEV_MODE"] = old_dev_mode
+    assert proxies is None
+
+
+def test_uk_proxy_uses_configured_url():
+    proxies = PipelineService._build_uk_proxy_config(
+        Path("/tmp/app"),
+        {
+            "environment": "production",
+            "chainthink_uk": {"proxy_url": "http://127.0.0.1:8888"},
+        },
+    )
+    assert proxies == {
+        "http": "http://127.0.0.1:8888",
+        "https": "http://127.0.0.1:8888",
+    }
+
+
 if __name__ == "__main__":
     test_uk_publish_sync_disabled()
     test_uk_publish_mode_calls_publish()
@@ -204,4 +251,7 @@ if __name__ == "__main__":
     test_save_article_draft_syncs_uk_draft_when_sync_enabled()
     test_uk_broadcast_skips_in_draft_mode()
     test_uk_broadcast_pushes_in_publish_mode()
+    test_uk_proxy_enabled_for_opt_production_path()
+    test_uk_proxy_disabled_in_dev_mode()
+    test_uk_proxy_uses_configured_url()
     print("[OK] UK sync mode tests passed")

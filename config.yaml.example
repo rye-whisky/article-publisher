@@ -20,6 +20,8 @@ chainthink_uk:
   app_id: "101"
   as_user_id: "1"
   sync_enabled: "0"
+  proxy_enabled: "1"                  # production only; set 0 to bypass proxy
+  proxy_url: "http://127.0.0.1:7890"  # production UK CMS/upload/push requests
 
 database:
   # PostgreSQL (for server deployment - optional)

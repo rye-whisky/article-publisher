@@ -35,6 +35,7 @@ class COSUploader:
         api_headers_provider: Callable[[], dict] | None = None,
         origin: str = "https://admin.chainthink.cn",
         default_domain: str = "https://cos.chainthink.cn",
+        request_proxies: dict | None = None,
     ):
         self.upload_url = upload_url
         self.api_headers = api_headers
@@ -43,6 +44,7 @@ class COSUploader:
         self.x_app_id = x_app_id
         self.origin = origin
         self.default_domain = default_domain
+        self.request_proxies = request_proxies
 
     def _headers(self) -> dict:
         if self.api_headers_provider:
@@ -63,6 +65,7 @@ class COSUploader:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         try:
             data = r.json()

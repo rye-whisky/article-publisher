@@ -55,6 +55,7 @@ class Publisher:
         push_url: str = "",
         api_headers_provider: Callable[[], dict] | None = None,
         user_id_provider: Callable[[], str] | None = None,
+        request_proxies: dict | None = None,
     ):
         self.api_url = api_url
         self.api_headers = api_headers
@@ -62,6 +63,7 @@ class Publisher:
         self.cos = cos_uploader
         self.push_url = push_url
         self._user_id_provider = user_id_provider
+        self.request_proxies = request_proxies
 
     def _headers(self) -> dict:
         if self.api_headers_provider:
@@ -291,6 +293,7 @@ class Publisher:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         data = parse_response_json(r)
         if r.status_code == 200 and data.get("code") == 0:
@@ -337,6 +340,7 @@ class Publisher:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         data = parse_response_json(r)
         if r.status_code == 200 and data.get("code") == 0:

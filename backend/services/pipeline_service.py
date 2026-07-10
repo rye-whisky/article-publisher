@@ -6,6 +6,7 @@ This is the canonical service used by the API routes.
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -213,6 +214,32 @@ class PipelineService:
 
     # -- Factory --
 
+    @staticmethod
+    def _is_production_environment(base_dir: Path, cfg: dict) -> bool:
+        env_value = (
+            os.environ.get("APP_ENV")
+            or os.environ.get("ENVIRONMENT")
+            or os.environ.get("PYTHON_ENV")
+            or str(cfg.get("environment", ""))
+        ).strip().lower()
+        if env_value:
+            return env_value in {"prod", "production"}
+        if os.environ.get("DEV_MODE", "").lower() in {"1", "true", "yes"}:
+            return False
+        return str(base_dir).startswith("/opt/article-publisher")
+
+    @classmethod
+    def _build_uk_proxy_config(cls, base_dir: Path, cfg: dict) -> dict | None:
+        chainthink_uk = cfg.get("chainthink_uk") or {}
+        if not cls._is_production_environment(base_dir, cfg):
+            return None
+        if str(chainthink_uk.get("proxy_enabled", "1")).lower() in {"0", "false", "no", "off"}:
+            return None
+        proxy_url = str(chainthink_uk.get("proxy_url") or "http://127.0.0.1:7890").strip()
+        if not proxy_url:
+            return None
+        return {"http": proxy_url, "https": proxy_url}
+
     @classmethod
     def create(cls, base_dir: Path = None) -> "PipelineService":
         """Build a PipelineService from config.yaml."""
@@ -351,6 +378,9 @@ class PipelineService:
         uk_publisher = None
         chainthink_uk = cfg.get("chainthink_uk") or {}
         if chainthink_uk.get("api_url") and chainthink_uk.get("upload_url"):
+            uk_request_proxies = cls._build_uk_proxy_config(base_dir, cfg)
+            if uk_request_proxies:
+                log.info("UK ChainThink requests will use production proxy: %s", uk_request_proxies["https"])
             uk_headers_provider = make_headers_provider(
                 "chainthink_uk",
                 "https://admin.chainthink.co.uk",
@@ -366,6 +396,7 @@ class PipelineService:
                 api_headers_provider=uk_headers_provider,
                 origin="https://admin.chainthink.co.uk",
                 default_domain=str(chainthink_uk.get("cos_domain", "https://cos.chainthink.co.uk")),
+                request_proxies=uk_request_proxies,
             )
             uk_user_id_provider = make_setting_provider(
                 "chainthink_uk",
@@ -380,6 +411,7 @@ class PipelineService:
                 push_url=chainthink_uk.get("push_url", ""),
                 api_headers_provider=uk_headers_provider,
                 user_id_provider=uk_user_id_provider,
+                request_proxies=uk_request_proxies,
             )
 
         article_store = ArticleStore(scrapers)
