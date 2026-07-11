@@ -55,6 +55,7 @@ class Publisher:
         push_url: str = "",
         api_headers_provider: Callable[[], dict] | None = None,
         user_id_provider: Callable[[], str] | None = None,
+        request_proxies: dict | None = None,
     ):
         self.api_url = api_url
         self.api_headers = api_headers
@@ -62,6 +63,7 @@ class Publisher:
         self.cos = cos_uploader
         self.push_url = push_url
         self._user_id_provider = user_id_provider
+        self.request_proxies = request_proxies
 
     def _headers(self) -> dict:
         if self.api_headers_provider:
@@ -204,6 +206,7 @@ class Publisher:
         # Rule 2: Append author/editor/source info at the end.
         author = (article.get("author") or "").strip()
         source = (article.get("source") or "").strip()
+        source_key = (article.get("source_key") or "").strip().lower()
         publish_strategy = (article.get("_publish_strategy") or article.get("published_strategy") or "").strip().lower()
         is_auto_publish = publish_strategy == "auto"
         body_text_normalized = self._normalize_text_for_match("".join(parts))
@@ -216,7 +219,8 @@ class Publisher:
             else:
                 parts.append(f"<p>作者：{self.html_escape(author)}</p>")
 
-        if source:
+        # TechFlow (深潮): keep author line only, skip source line entirely.
+        if source and source_key != "techflow":
             if is_auto_publish and self._author_contains_source_identity(author, source):
                 pass
             else:
@@ -254,6 +258,8 @@ class Publisher:
                 log.warning("Cover upload failed for %s: %s", article.get("article_id_full", ""), exc)
 
         article_id = str(article.get("cms_id") or "0")
+        default_user_id = self._user_id_provider() if self._user_id_provider else "3"
+        payload_user_id = str(article.get("user_id") or default_user_id or "3")
         payload = {
             "id": article_id,
             "info": {"cover_image": cover_image} if cover_image else {},
@@ -274,9 +280,10 @@ class Publisher:
             "is_push_bian": 2,
             "content_pin_top": 0,
             "is_public": bool(is_public),
-            "user_id": str(article.get("user_id") or "3"),
+            "is_good": bool(article.get("is_good", False)),
+            "user_id": payload_user_id,
             "chain_fixed_publish_time": 0,
-            "as_user_id": str(article.get("as_user_id") or (self._user_id_provider() if self._user_id_provider else article.get("user_id") or "3")),
+            "as_user_id": payload_user_id,
             "is_chain": True,
             "chain_airdrop_time": 0,
             "chain_airdrop_time_end": 0,
@@ -286,6 +293,7 @@ class Publisher:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         data = parse_response_json(r)
         if r.status_code == 200 and data.get("code") == 0:
@@ -332,6 +340,7 @@ class Publisher:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         data = parse_response_json(r)
         if r.status_code == 200 and data.get("code") == 0:
@@ -339,4 +348,3 @@ class Publisher:
         if is_chainthink_auth_failure(r.status_code, data):
             raise ChainThinkAuthError("ChainThink token expired or invalid")
         raise RuntimeError(f"push failed: {r.status_code} {data}")
-

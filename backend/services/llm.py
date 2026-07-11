@@ -49,6 +49,54 @@ ABSTRACT_SYSTEM_PROMPT = (
     "3. 行业术语使用规范准确，语句通顺完整，不添加原文以外的任何信息，不做主观解读。"
 )
 
+REFUSAL_ABSTRACT_KEYWORDS = (
+    # Chinese refusal-style outputs
+    "无法回答",
+    "不能回答",
+    "无法提供",
+    "无法给到",
+    "无法协助",
+    "无法帮助",
+    "不能帮助",
+    "抱歉",
+    "很遗憾",
+    "未找到相关",
+    "没有找到相关",
+    "无法识别",
+    "不便回答",
+    "不予回答",
+    "内容不予展示",
+    "由于安全原因",
+    "违反政策",
+    "请求被拒绝",
+    "请提供更多信息",
+    "无法处理该请求",
+    # English refusal-style outputs
+    "i can't",
+    "i cannot",
+    "i'm sorry",
+    "sorry",
+    "cannot assist",
+    "can't assist",
+    "not able to help",
+    "unable to provide",
+    "content policy",
+    "safety policy",
+    "request cannot be fulfilled",
+    "no relevant result",
+)
+
+
+def detect_refusal_abstract(text: str) -> tuple[bool, str]:
+    """Detect refusal-style summary text and return (is_refusal, matched_keyword)."""
+    if not text:
+        return False, ""
+    normalized = " ".join(str(text).lower().split())
+    for keyword in REFUSAL_ABSTRACT_KEYWORDS:
+        if keyword.lower() in normalized:
+            return True, keyword
+    return False, ""
+
 
 def generate_abstract(article: dict, db: ArticleDatabase) -> str:
     """Generate AI abstract for an article.

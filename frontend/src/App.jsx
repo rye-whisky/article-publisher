@@ -132,6 +132,8 @@ const buildWorkflowSettingsForm = (settingsData = {}) => ({
   })(),
   broadcast_enabled: (settingsData.broadcast_enabled ?? '0') === '1',
   broadcast_grace_minutes: settingsData.broadcast_grace_minutes || '15',
+  chainthink_uk_sync_enabled: (settingsData.chainthink_uk_sync_enabled ?? '0') === '1',
+  chainthink_uk_draft_enabled: (settingsData.chainthink_uk_draft_enabled ?? '0') === '1',
   llm_optimization_enabled: (settingsData.llm_optimization_enabled ?? '0') === '1',
   llm_author_info_enabled: (settingsData.llm_author_info_enabled ?? '0') === '1',
   ai_daily_limit: settingsData.ai_daily_limit || '2',
@@ -147,10 +149,21 @@ const workflowSettingsToPayload = (form) => ({
   push_auto_sources: JSON.stringify(form.push_auto_sources || []),
   broadcast_enabled: form.broadcast_enabled ? '1' : '0',
   broadcast_grace_minutes: String(form.broadcast_grace_minutes || '15'),
+  chainthink_uk_sync_enabled: form.chainthink_uk_sync_enabled ? '1' : '0',
+  chainthink_uk_draft_enabled: form.chainthink_uk_draft_enabled ? '1' : '0',
   llm_optimization_enabled: form.llm_optimization_enabled ? '1' : '0',
   llm_author_info_enabled: form.llm_author_info_enabled ? '1' : '0',
   ai_daily_limit: String(form.ai_daily_limit || '2'),
 })
+
+const formatUkSyncMessage = (result) => {
+  const uk = result?.uk_sync
+  if (!uk) return ''
+  if (uk.ok && uk.skipped) return '\nUK 推送跳过：草稿模式'
+  if (uk.ok && uk.publish_stage === 'draft') return `\nUK 草稿 ID: ${uk.cms_id}`
+  if (uk.ok) return `\nUK CMS ID: ${uk.cms_id}`
+  return `\nUK 同步失败：${uk.error || 'unknown error'}`
+}
 
 const parseKeywordLibraryInput = (value) => {
   const seen = new Set()
@@ -406,6 +419,22 @@ function DashboardPage({ onNavigateProfile }) {
     setWorkflowForm(prev => ({ ...prev, [field]: value }))
   }
 
+  const handleWorkflowFieldSave = async (field, value) => {
+    const nextForm = { ...workflowForm, [field]: value }
+    setWorkflowForm(nextForm)
+    setWorkflowSaving(true)
+    try {
+      await api.updateSettings(workflowSettingsToPayload(nextForm))
+      setWorkflowDirty(false)
+      await fetchStatus()
+    } catch (e) {
+      alert(e.message)
+      await fetchStatus()
+    } finally {
+      setWorkflowSaving(false)
+    }
+  }
+
   const handleDashboardToggleAutoSource = (sourceKey) => {
     setWorkflowDirty(true)
     setWorkflowForm(prev => {
@@ -587,6 +616,40 @@ function DashboardPage({ onNavigateProfile }) {
                   onChange={e => handleWorkflowFieldChange('push_enabled', e.target.checked)}
                 />
                 <span>{workflowForm.push_enabled ? '已开启' : '已关闭'}</span>
+              </label>
+            )}
+          </div>
+          <div className="settings-group">
+            <label>同步 UK 后台</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">{workflow.uk_sync?.enabled ? '已开启' : '已关闭'}</div>
+            ) : (
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={workflowForm.chainthink_uk_sync_enabled}
+                  disabled={workflowSaving}
+                  onChange={e => handleWorkflowFieldSave('chainthink_uk_sync_enabled', e.target.checked)}
+                />
+                <span>{workflowForm.chainthink_uk_sync_enabled ? '已开启' : '已关闭'}</span>
+              </label>
+            )}
+          </div>
+          <div className="settings-group">
+            <label>UK 草稿</label>
+            {isGuest ? (
+              <div className="workflow-inline-value">
+                {workflow.uk_sync?.enabled && workflow.uk_sync?.draft_enabled ? '已开启' : '已关闭'}
+              </div>
+            ) : (
+              <label className="workflow-toggle">
+                <input
+                  type="checkbox"
+                  checked={workflowForm.chainthink_uk_draft_enabled}
+                  disabled={workflowSaving || !workflowForm.chainthink_uk_sync_enabled}
+                  onChange={e => handleWorkflowFieldSave('chainthink_uk_draft_enabled', e.target.checked)}
+                />
+                <span>{workflowForm.chainthink_uk_sync_enabled && workflowForm.chainthink_uk_draft_enabled ? '已开启' : '已关闭'}</span>
               </label>
             )}
           </div>
@@ -937,7 +1000,8 @@ function ArticleEditor({ article, onSave, onCancel, isAiArticle }) {
 
       alert(
         (mode === 'draft' ? t('saveToBackendSuccess') : t('publishSuccess')) +
-        ` (CMS ID: ${result.cms_id})`
+        ` (CMS ID: ${result.cms_id})` +
+        formatUkSyncMessage(result)
       )
       onSave()
     } catch (e) {
@@ -1207,10 +1271,10 @@ function ArticlesPage() {
   const handlePublish = async (articleId) => {
     try {
       const result = await api.publishArticle(articleId)
-      let message = t('publishSuccess') + ` (CMS ID: ${result.cms_id})`
+      let message = t('publishSuccess') + ` (CMS ID: ${result.cms_id})` + formatUkSyncMessage(result)
       if (result.duplicate_warning) {
         const dup = result.duplicate_warning
-        message = `${dup.message}\n\n相似文章：\n${dup.duplicates.map(d => `- ${d.title}`).join('\n')}\n\n${t('publishSuccess')} (CMS ID: ${result.cms_id})`
+        message = `${dup.message}\n\n相似文章：\n${dup.duplicates.map(d => `- ${d.title}`).join('\n')}\n\n${t('publishSuccess')} (CMS ID: ${result.cms_id})${formatUkSyncMessage(result)}`
       }
       alert(message)
       await refreshSelectedArticle(articleId)
@@ -1222,7 +1286,7 @@ function ArticlesPage() {
   const handleBroadcast = async (articleId) => {
     try {
       const result = await api.broadcastArticle(articleId)
-      alert(t('broadcastSuccess'))
+      alert(t('broadcastSuccess') + formatUkSyncMessage(result))
       await refreshSelectedArticle(articleId)
     } catch (e) {
       alert(e.message)
@@ -1816,6 +1880,30 @@ function PromptPage() {
                 disabled={isGuest}
               />
               <span>{settingsForm.push_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>同步 UK 后台</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.chainthink_uk_sync_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, chainthink_uk_sync_enabled: e.target.checked }))}
+                disabled={isGuest}
+              />
+              <span>{settingsForm.chainthink_uk_sync_enabled ? '已开启' : '已关闭'}</span>
+            </label>
+          </div>
+          <div className="settings-group">
+            <label>UK 草稿</label>
+            <label className="workflow-toggle">
+              <input
+                type="checkbox"
+                checked={settingsForm.chainthink_uk_draft_enabled}
+                onChange={e => setSettingsForm(prev => ({ ...prev, chainthink_uk_draft_enabled: e.target.checked }))}
+                disabled={isGuest || !settingsForm.chainthink_uk_sync_enabled}
+              />
+              <span>{settingsForm.chainthink_uk_sync_enabled && settingsForm.chainthink_uk_draft_enabled ? '已开启' : '已关闭'}</span>
             </label>
           </div>
           <div className="settings-group">
@@ -2468,6 +2556,11 @@ function ProfilePage({ onLogout }) {
   const [chainthinkToken, setChainthinkToken] = useState('')
   const [chainthinkAppId, setChainthinkAppId] = useState('')
   const [chainthinkUserId, setChainthinkUserId] = useState('')
+  const [chainthinkAsUserId, setChainthinkAsUserId] = useState('')
+  const [chainthinkUkToken, setChainthinkUkToken] = useState('')
+  const [chainthinkUkAppId, setChainthinkUkAppId] = useState('')
+  const [chainthinkUkUserId, setChainthinkUkUserId] = useState('')
+  const [chainthinkUkAsUserId, setChainthinkUkAsUserId] = useState('')
   const [chainthinkTokenLoading, setChainthinkTokenLoading] = useState(true)
   const [chainthinkTokenSaving, setChainthinkTokenSaving] = useState(false)
 
@@ -2477,6 +2570,11 @@ function ProfilePage({ onLogout }) {
       setChainthinkToken(data.chainthink_token || '')
       setChainthinkAppId(data.chainthink_app_id || '')
       setChainthinkUserId(data.chainthink_user_id || '')
+      setChainthinkAsUserId(data.chainthink_as_user_id || '')
+      setChainthinkUkToken(data.chainthink_uk_token || '')
+      setChainthinkUkAppId(data.chainthink_uk_app_id || '')
+      setChainthinkUkUserId(data.chainthink_uk_user_id || '')
+      setChainthinkUkAsUserId(data.chainthink_uk_as_user_id || '')
     }).catch(console.error).finally(() => setChainthinkTokenLoading(false))
   }
 
@@ -2486,13 +2584,26 @@ function ProfilePage({ onLogout }) {
     const token = chainthinkToken.trim()
     const appId = chainthinkAppId.trim()
     const userId = chainthinkUserId.trim()
-    if ((!token || token.startsWith('*')) && !appId && !userId) return
+    const asUserId = chainthinkAsUserId.trim()
+    const ukToken = chainthinkUkToken.trim()
+    const ukAppId = chainthinkUkAppId.trim()
+    const ukUserId = chainthinkUkUserId.trim()
+    const ukAsUserId = chainthinkUkAsUserId.trim()
+    if (
+      (!token || token.startsWith('*')) && !appId && !userId && !asUserId
+      && (!ukToken || ukToken.startsWith('*')) && !ukAppId && !ukUserId && !ukAsUserId
+    ) return
     setChainthinkTokenSaving(true)
     try {
       const payload = {}
       if (appId) payload.chainthink_app_id = appId
       if (userId) payload.chainthink_user_id = userId
+      if (asUserId) payload.chainthink_as_user_id = asUserId
       if (token && !token.startsWith('*')) payload.chainthink_token = token
+      if (ukAppId) payload.chainthink_uk_app_id = ukAppId
+      if (ukUserId) payload.chainthink_uk_user_id = ukUserId
+      if (ukAsUserId) payload.chainthink_uk_as_user_id = ukAsUserId
+      if (ukToken && !ukToken.startsWith('*')) payload.chainthink_uk_token = ukToken
       await api.updateSettings(payload)
       loadChainthinkSettings()
       alert(t('saveSuccess'))
@@ -2643,7 +2754,7 @@ function ProfilePage({ onLogout }) {
 
       {!isGuest && (
         <div className="card">
-          <div className="card-header"><h2>{t('chainthinkToken')}</h2></div>
+          <div className="card-header"><h2>{t('chainthinkCnToken')}</h2></div>
           <div className="settings-group">
             <label>x-app-id</label>
             <input
@@ -2651,6 +2762,24 @@ function ProfilePage({ onLogout }) {
               value={chainthinkAppId}
               onChange={e => setChainthinkAppId(e.target.value)}
               placeholder="101"
+            />
+          </div>
+          <div className="settings-group">
+            <label>x-user-id</label>
+            <input
+              type="text"
+              value={chainthinkUserId}
+              onChange={e => setChainthinkUserId(e.target.value)}
+              placeholder="59"
+            />
+          </div>
+          <div className="settings-group">
+            <label>as-user-id</label>
+            <input
+              type="text"
+              value={chainthinkAsUserId}
+              onChange={e => setChainthinkAsUserId(e.target.value)}
+              placeholder="3"
             />
           </div>
           <div className="settings-group">
@@ -2662,16 +2791,7 @@ function ProfilePage({ onLogout }) {
               placeholder={t('chainthinkTokenPlaceholder')}
             />
           </div>
-          <div className="settings-group">
-            <label>x-user-id</label>
-            <input
-              type="text"
-              value={chainthinkUserId}
-              onChange={e => setChainthinkUserId(e.target.value)}
-              placeholder="83"
-            />
-            <div className="hint">{t('chainthinkTokenHint')}</div>
-          </div>
+          <div className="hint">{t('chainthinkTokenHint')}</div>
           <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
             <button
               className="btn btn-primary"
@@ -2682,6 +2802,75 @@ function ProfilePage({ onLogout }) {
                   (!chainthinkToken.trim() || chainthinkToken.trim().startsWith('*'))
                   && !chainthinkAppId.trim()
                   && !chainthinkUserId.trim()
+                  && !chainthinkAsUserId.trim()
+                  && (!chainthinkUkToken.trim() || chainthinkUkToken.trim().startsWith('*'))
+                  && !chainthinkUkAppId.trim()
+                  && !chainthinkUkUserId.trim()
+                  && !chainthinkUkAsUserId.trim()
+                )
+              }
+            >
+              {chainthinkTokenSaving ? '...' : t('save')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isGuest && (
+        <div className="card">
+          <div className="card-header"><h2>{t('chainthinkUkToken')}</h2></div>
+          <div className="settings-group">
+            <label>x-app-id</label>
+            <input
+              type="text"
+              value={chainthinkUkAppId}
+              onChange={e => setChainthinkUkAppId(e.target.value)}
+              placeholder="101"
+            />
+          </div>
+          <div className="settings-group">
+            <label>x-user-id</label>
+            <input
+              type="text"
+              value={chainthinkUkUserId}
+              onChange={e => setChainthinkUkUserId(e.target.value)}
+              placeholder="1"
+            />
+          </div>
+          <div className="settings-group">
+            <label>as-user-id</label>
+            <input
+              type="text"
+              value={chainthinkUkAsUserId}
+              onChange={e => setChainthinkUkAsUserId(e.target.value)}
+              placeholder="1"
+            />
+          </div>
+          <div className="settings-group">
+            <label>x-token</label>
+            <input
+              type="password"
+              value={chainthinkUkToken}
+              onChange={e => setChainthinkUkToken(e.target.value)}
+              placeholder={t('chainthinkTokenPlaceholder')}
+            />
+          </div>
+          <div className="hint">{t('chainthinkUkTokenHint')}</div>
+          <div className="editor-actions" style={{ borderTop: 'none', paddingTop: 0 }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleSaveChainthinkToken}
+              disabled={
+                chainthinkTokenSaving ||
+                (
+                  (!chainthinkToken.trim() || chainthinkToken.trim().startsWith('*'))
+                  && !chainthinkAppId.trim()
+                  && !chainthinkUserId.trim()
+                  && !chainthinkAsUserId.trim()
+                  && (!chainthinkUkToken.trim() || chainthinkUkToken.trim().startsWith('*'))
+                  && !chainthinkUkAppId.trim()
+                  && !chainthinkUkUserId.trim()
+                  && !chainthinkUkAsUserId.trim()
                 )
               }
             >

@@ -91,8 +91,15 @@ class ArticleDatabase:
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 published_at TEXT,
                 cms_id TEXT,
+                is_good INTEGER DEFAULT 0,
                 broadcasted_at TEXT,
                 broadcast_strategy TEXT,
+                uk_cms_id TEXT,
+                uk_publish_stage TEXT,
+                uk_published_at TEXT,
+                uk_broadcasted_at TEXT,
+                uk_sync_error TEXT,
+                uk_sync_error_at TEXT,
                 in_site_conflict_url TEXT,
                 in_site_conflict_title TEXT,
                 in_site_conflict_published_at TEXT,
@@ -211,6 +218,13 @@ class ArticleDatabase:
             "ALTER TABLE push_history ADD COLUMN in_site_article_title TEXT",
             "ALTER TABLE push_history ADD COLUMN in_site_article_published_at TEXT",
             "ALTER TABLE articles ADD COLUMN keywords TEXT",
+            "ALTER TABLE articles ADD COLUMN is_good INTEGER DEFAULT 0",
+            "ALTER TABLE articles ADD COLUMN uk_cms_id TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_publish_stage TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_published_at TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_broadcasted_at TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_sync_error TEXT",
+            "ALTER TABLE articles ADD COLUMN uk_sync_error_at TEXT",
         ]:
             try:
                 conn.execute(col_sql)
@@ -410,6 +424,7 @@ class ArticleDatabase:
             "updated_at": now,
             "published_at": article.get("published_at"),
             "cms_id": article.get("cms_id"),
+            "is_good": int(bool(article.get("is_good"))) if "is_good" in article else None,
         }
 
         conn.execute(
@@ -421,7 +436,7 @@ class ArticleDatabase:
                 filter_status, filter_reason, duplicate_key,
                 score_status, score_reason, review_status,
                 auto_publish_enabled, publish_stage, published_strategy, scored_at,
-                created_at, updated_at, published_at, cms_id
+                created_at, updated_at, published_at, cms_id, is_good
             ) VALUES (
                 :article_id, :source_key, :raw_id, :title, :source, :author,
                 :publish_time, :original_url, :cover_src, :blocks, :abstract,
@@ -429,7 +444,7 @@ class ArticleDatabase:
                 :filter_status, :filter_reason, :duplicate_key,
                 :score_status, :score_reason, :review_status,
                 :auto_publish_enabled, COALESCE(:publish_stage, 'local'), :published_strategy, :scored_at,
-                :created_at, :updated_at, :published_at, :cms_id
+                :created_at, :updated_at, :published_at, :cms_id, COALESCE(:is_good, 0)
             )
             ON CONFLICT(article_id) DO UPDATE SET
                 source_key = excluded.source_key,
@@ -462,7 +477,11 @@ class ArticleDatabase:
                 scored_at = COALESCE(excluded.scored_at, articles.scored_at),
                 updated_at = excluded.updated_at,
                 published_at = COALESCE(excluded.published_at, articles.published_at),
-                cms_id = COALESCE(excluded.cms_id, articles.cms_id)
+                cms_id = COALESCE(excluded.cms_id, articles.cms_id),
+                is_good = CASE
+                    WHEN :is_good IS NOT NULL THEN excluded.is_good
+                    ELSE articles.is_good
+                END
             """,
             payload,
         )
@@ -717,6 +736,18 @@ class ArticleDatabase:
         conn.commit()
         return cursor.rowcount > 0
 
+    def update_tags(self, article_id: str, tags: list[str]) -> bool:
+        """Persist tags without touching scoring state."""
+        conn = self._get_conn()
+        sanitized_tags = [_sanitize_for_gbk(str(tag)) for tag in tags or []]
+        tags_json = json.dumps(sanitized_tags, ensure_ascii=True) if sanitized_tags else None
+        cursor = conn.execute(
+            "UPDATE articles SET tags = ?, updated_at = ? WHERE article_id = ?",
+            (tags_json, datetime.now().isoformat(), article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def find_recent_by_keyword_overlap(
         self,
         keywords: list[str],
@@ -846,20 +877,64 @@ class ArticleDatabase:
         conn.commit()
         return cursor.rowcount > 0
 
-    def mark_published(self, article_id: str, cms_id: str, strategy: str = "manual") -> bool:
+    def mark_published(self, article_id: str, cms_id: str, strategy: str = "manual",
+                       is_good: bool | None = None) -> bool:
         """Mark article as publicly published."""
         conn = self._get_conn()
         now = datetime.now().isoformat()
-        cursor = conn.execute(
-            """
-            UPDATE articles
-            SET cms_id = ?, publish_stage = 'published', published_at = ?, published_strategy = ?, updated_at = ?
-            WHERE article_id = ?
-            """,
-            (cms_id, now, strategy, now, article_id),
-        )
+        if is_good is None:
+            cursor = conn.execute(
+                """
+                UPDATE articles
+                SET cms_id = ?, publish_stage = 'published', published_at = ?, published_strategy = ?, updated_at = ?
+                WHERE article_id = ?
+                """,
+                (cms_id, now, strategy, now, article_id),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE articles
+                SET cms_id = ?, publish_stage = 'published', published_at = ?,
+                    published_strategy = ?, is_good = ?, updated_at = ?
+                WHERE article_id = ?
+                """,
+                (cms_id, now, strategy, int(bool(is_good)), now, article_id),
+            )
         conn.commit()
         return cursor.rowcount > 0
+
+    def count_auto_published_after_last_good(self, strategy: str = "auto") -> int | None:
+        """Count successful auto publishes after the latest selected article."""
+        conn = self._get_conn()
+        last_good = conn.execute(
+            """
+            SELECT published_at
+            FROM articles
+            WHERE published_strategy = ?
+              AND COALESCE(is_good, 0) = 1
+              AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')
+              AND published_at IS NOT NULL
+            ORDER BY published_at DESC
+            LIMIT 1
+            """,
+            (strategy,),
+        ).fetchone()
+        if not last_good:
+            return None
+
+        row = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM articles
+            WHERE published_strategy = ?
+              AND COALESCE(publish_stage, 'local') IN ('published', 'broadcasted')
+              AND published_at IS NOT NULL
+              AND published_at > ?
+            """,
+            (strategy, last_good["published_at"]),
+        ).fetchone()
+        return row[0] if row else 0
 
     def mark_broadcasted(self, article_id: str, strategy: str = "manual") -> bool:
         """Mark article as broadcasted (app desktop push)."""
@@ -872,6 +947,70 @@ class ArticleDatabase:
             WHERE article_id = ?
             """,
             (now, strategy, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_published(self, article_id: str, uk_cms_id: str) -> bool:
+        """Record the paired UK CMS article id for a synced public publish."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_cms_id = ?, uk_publish_stage = 'published', uk_published_at = ?, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (uk_cms_id, now, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_draft(self, article_id: str, uk_cms_id: str) -> bool:
+        """Record the paired UK CMS article id for a synced draft."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_cms_id = ?, uk_publish_stage = 'draft', uk_published_at = NULL,
+                uk_broadcasted_at = NULL, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (uk_cms_id, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_broadcasted(self, article_id: str) -> bool:
+        """Record that the paired UK CMS article was pushed."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_publish_stage = 'published', uk_broadcasted_at = ?, uk_sync_error = NULL,
+                uk_sync_error_at = NULL, updated_at = ?
+            WHERE article_id = ?
+            """,
+            (now, now, article_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def mark_uk_sync_error(self, article_id: str, error: str) -> bool:
+        """Record the latest UK sync failure without changing CN publish state."""
+        conn = self._get_conn()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            UPDATE articles
+            SET uk_sync_error = ?, uk_sync_error_at = ?, updated_at = ?
+            WHERE article_id = ?
+            """,
+            ((error or "")[:1000], now, now, article_id),
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -1676,6 +1815,12 @@ class ArticleDatabase:
             "updated_at": row["updated_at"],
             "published_at": row["published_at"],
             "cms_id": row["cms_id"],
+            "uk_cms_id": row["uk_cms_id"] if "uk_cms_id" in row.keys() else None,
+            "uk_publish_stage": row["uk_publish_stage"] if "uk_publish_stage" in row.keys() else None,
+            "uk_published_at": row["uk_published_at"] if "uk_published_at" in row.keys() else None,
+            "uk_broadcasted_at": row["uk_broadcasted_at"] if "uk_broadcasted_at" in row.keys() else None,
+            "uk_sync_error": row["uk_sync_error"] if "uk_sync_error" in row.keys() else None,
+            "uk_sync_error_at": row["uk_sync_error_at"] if "uk_sync_error_at" in row.keys() else None,
             "score": row["score"] if "score" in row.keys() else None,
             "category": row["category"] if "category" in row.keys() else None,
             "language": row["language"] if "language" in row.keys() else "zh",
@@ -1689,6 +1834,7 @@ class ArticleDatabase:
             "auto_publish_enabled": bool(row["auto_publish_enabled"]) if "auto_publish_enabled" in row.keys() else False,
             "publish_stage": row["publish_stage"] if "publish_stage" in row.keys() and row["publish_stage"] else ("draft" if row["cms_id"] else "local"),
             "published_strategy": row["published_strategy"] if "published_strategy" in row.keys() else None,
+            "is_good": bool(row["is_good"]) if "is_good" in row.keys() else False,
             "scored_at": row["scored_at"] if "scored_at" in row.keys() else None,
             "broadcasted_at": row["broadcasted_at"] if "broadcasted_at" in row.keys() else None,
             "broadcast_strategy": row["broadcast_strategy"] if "broadcast_strategy" in row.keys() else None,

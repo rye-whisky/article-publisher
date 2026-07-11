@@ -1,0 +1,27 @@
+{
+  "name": "article-publisher",
+  "version": "1.0.0",
+  "description": "> 面向 Web3/财经资讯团队的采集、清洗、评分、存草稿、自动发布与 App 推送一体化系统。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rye-whisky/article-publisher.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/rye-whisky/article-publisher/issues"
+  },
+  "homepage": "https://github.com/rye-whisky/article-publisher#readme",
+  "dependencies": {
+    "playwright": "^1.60.0"
+  }
+}

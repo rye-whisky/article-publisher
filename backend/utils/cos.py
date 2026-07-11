@@ -33,12 +33,18 @@ class COSUploader:
         session: requests.Session,
         x_app_id: str = "",
         api_headers_provider: Callable[[], dict] | None = None,
+        origin: str = "https://admin.chainthink.cn",
+        default_domain: str = "https://cos.chainthink.cn",
+        request_proxies: dict | None = None,
     ):
         self.upload_url = upload_url
         self.api_headers = api_headers
         self.api_headers_provider = api_headers_provider
         self.session = session
         self.x_app_id = x_app_id
+        self.origin = origin
+        self.default_domain = default_domain
+        self.request_proxies = request_proxies
 
     def _headers(self) -> dict:
         if self.api_headers_provider:
@@ -59,6 +65,7 @@ class COSUploader:
             headers=self._headers(),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             timeout=30,
+            proxies=self.request_proxies,
         )
         try:
             data = r.json()
@@ -171,7 +178,7 @@ class COSUploader:
                 "x-cos-security-token": security_token,
                 "Content-Type": content_type,
                 "Content-Length": str(len(content)),
-                "Origin": "https://admin.chainthink.cn",
+                "Origin": self.origin,
                 "Host": host,
             },
             data=content,
@@ -244,12 +251,12 @@ class COSUploader:
                     return cu_url
             except Exception:
                 pass
-        domain = file_info.get("domain") or upload.get("domain") or "https://cos.chainthink.cn"
+        domain = file_info.get("domain") or upload.get("domain") or self.default_domain
         if object_key:
             return f"{domain.rstrip('/')}/{object_key.lstrip('/')}"
         rh = file_info.get("hash") or upload.get("hash") or file_hash
         re_ = file_info.get("ext") or upload.get("ext") or ext
-        return f"https://cos.chainthink.cn/{self.x_app_id}_admin_file/{rh}/{rh}.{re_}"
+        return f"{self.default_domain.rstrip('/')}/{self.x_app_id}_admin_file/{rh}/{rh}.{re_}"
 
     # -- High-level: upload image from URL --
 
@@ -316,12 +323,12 @@ class COSUploader:
                         return cu_url
                 except Exception:
                     pass
-            domain = file_info.get("domain") or upload.get("domain") or "https://cos.chainthink.cn"
+            domain = file_info.get("domain") or upload.get("domain") or self.default_domain
             if object_key:
                 return f"{domain.rstrip('/')}/{object_key.lstrip('/')}"
             rh = file_info.get("hash") or upload.get("hash") or file_hash
             re_ = file_info.get("ext") or upload.get("ext") or ext
-            return f"https://cos.chainthink.cn/{self.x_app_id}_admin_file/{rh}/{rh}.{re_}"
+            return f"{self.default_domain.rstrip('/')}/{self.x_app_id}_admin_file/{rh}/{rh}.{re_}"
         finally:
             try:
                 os.unlink(tmp_path)

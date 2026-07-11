@@ -261,6 +261,8 @@ def publish_ai_article(request: Request, article_id: str, _admin=Depends(require
         result = pipeline_svc.publish_article(article, strategy="manual")
         if result:
             response = {"status": "ok", "cms_id": result.get("cms_id", ""), "publish_stage": "published"}
+            if "uk_sync" in result:
+                response["uk_sync"] = result["uk_sync"]
             if duplicate_warning:
                 response["duplicate_warning"] = duplicate_warning
             return response

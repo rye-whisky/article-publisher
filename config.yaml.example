@@ -4,9 +4,24 @@
 chainthink:
   api_url: "https://api-v2.chainthink.cn/ccs/v1/admin/content/publish"
   upload_url: "https://api-v2.chainthink.cn/ccs/v1/admin/upload_file"
+  push_url: "https://api-v2.chainthink.cn/financial_admin/v1/content/push"
+  cos_domain: "https://cos.chainthink.cn"
   token: "${CHAINTHINK_TOKEN}"     # read from environment variable
   user_id: "83"
   app_id: "101"
+
+chainthink_uk:
+  api_url: "https://api.chainthink.co.uk/ccs/v1/admin/content/publish"
+  upload_url: "https://api.chainthink.co.uk/ccs/v1/admin/upload_file"
+  push_url: "https://api.chainthink.co.uk/financial_admin/v1/content/push"
+  cos_domain: "https://cos.chainthink.co.uk"
+  token: "${CHAINTHINK_UK_TOKEN}"
+  user_id: "1"
+  app_id: "101"
+  as_user_id: "1"
+  sync_enabled: "0"
+  proxy_enabled: "1"                  # production only; set 0 to bypass proxy
+  proxy_url: "http://127.0.0.1:7890"  # production UK CMS/upload/push requests
 
 database:
   # PostgreSQL (for server deployment - optional)
@@ -46,6 +61,6 @@ retry:
 
 auth:
   username: "admin"
-  password: "${ADMIN_PASSWORD}"  # read from environment variable
+  password: "admin123456"
   secret_key: "${SECRET_KEY}"    # read from environment variable
   token_expire_hours: 24

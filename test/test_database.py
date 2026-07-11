@@ -67,6 +67,26 @@ def test_database():
     assert success
     print(f"[OK] Marked as published: cms_12345")
 
+    # Test UK sync metadata
+    assert db.mark_uk_draft("test:12345", "uk_draft_12345")
+    drafted = db.get_by_article_id("test:12345")
+    assert drafted["uk_cms_id"] == "uk_draft_12345"
+    assert drafted["uk_publish_stage"] == "draft"
+    assert not drafted["uk_published_at"]
+    assert not drafted["uk_broadcasted_at"]
+    assert db.mark_uk_published("test:12345", "uk_12345")
+    assert db.mark_uk_broadcasted("test:12345")
+    synced = db.get_by_article_id("test:12345")
+    assert synced["uk_cms_id"] == "uk_12345"
+    assert synced["uk_publish_stage"] == "published"
+    assert synced["uk_published_at"]
+    assert synced["uk_broadcasted_at"]
+    assert not synced["uk_sync_error"]
+    db.mark_uk_sync_error("test:12345", "uk failed")
+    errored = db.get_by_article_id("test:12345")
+    assert errored["uk_sync_error"] == "uk failed"
+    print(f"[OK] Recorded UK sync metadata: {synced['uk_cms_id']}")
+
     # Test get published IDs
     published_ids = db.get_published_ids()
     assert "test:12345" in published_ids
